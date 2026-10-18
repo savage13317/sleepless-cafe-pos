@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- R53: repo is public on GitHub Pages — the staff shell's noindex guard moves here,
+         since this file is now what the unlisted root URL serves. -->
+    <meta name="robots" content="noindex, nofollow">
+    <title>Sleepless Cafe | SOP Manual & Staff Portal</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Font: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            dark: '#140c08',      // Deep roast background
+                            card: '#221610',      // Warm espresso card background
+                            cardHover: '#2d1d15',
+                            accent: '#d48d37',    // Latte Gold from logo
+                            accentLight: '#eec278',
+                            cream: '#f8f1e5',     // Soft cream text
+                            muted: '#a38f83',     // Muted coffee text
+                            border: '#3d271d'     // Subtle border
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Playfair Display', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #140c08;
+            color: #f8f1e5;
+            font-family: 'Inter', sans-serif;
+            background-image: radial-gradient(circle at 50% 0%, #351f14 0%, #140c08 70%);
+            background-attachment: fixed;
+        }
+
+        /* Glassmorphism effects */
+        .glass-panel {
+            background: rgba(34, 22, 16, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(212, 141, 55, 0.15);
+        }
+
+        .glass-card {
+            background: rgba(45, 29, 21, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(212, 141, 55, 0.12);
+        }
+
+        .glass-card:hover {
+            border-color: rgba(212, 141, 55, 0.35);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(212, 141, 55, 0.1);
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #140c08;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3d271d;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d48d37;
+        }
+
+        /* Active navigation tab highlight */
+        .nav-btn.active {
+            background: linear-gradient(135deg, #d48d37 0%, #b06f23 100%);
+            color: #140c08;
+            font-weight: 700;
+            box-shadow: 0 4px 15px rgba(212, 141, 55, 0.3);
+        }
+
+        /* R53: portal link into the costing tool. Sits in the nav row but is not a tab —
+           it navigates to staff.html, so it keeps its own amber outline at all times. */
+        .portal-btn {
+            border: 1px solid rgba(212, 141, 55, 0.35);
+            background: rgba(212, 141, 55, 0.10);
+            color: #eec278;
+            font-size: .78rem;
+            letter-spacing: .02em;
+            white-space: nowrap;
+            text-decoration: none;
+            padding: 8px 14px;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .portal-btn:hover {
+            background: linear-gradient(135deg, #d48d37 0%, #b06f23 100%);
+            color: #140c08;
+            border-color: #d48d37;
+            box-shadow: 0 4px 15px rgba(212, 141, 55, 0.3);
+        }
+
+        /* Custom Checkbox Animation */
+        .checkbox-custom:checked + div {
+            background-color: #d48d37;
+            border-color: #d48d37;
+        }
+        .checkbox-custom:checked + div i {
+            display: block;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white !important; color: black !important; }
+            .glass-panel, .glass-card { background: white !important; color: black !important; border: 1px solid #ccc !important; }
+            .print-full { width: 100% !important; max-width: none !important; }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- TOP HEADER / HERO BAR -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+            <div class="flex items-center justify-between">
+                
+                <!-- Brand Logo & Name -->
+                <div class="flex items-center space-x-3 sm:space-x-4">
+                    <!-- SVG Coffee Cup Logo (Rendered from uploaded brand image concept) -->
+                    <div class="relative w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-[#d48d37] to-[#140c08] p-0.5 shadow-lg shadow-brand-accent/20 flex-shrink-0">
+                        <div class="w-full h-full bg-brand-dark rounded-full flex items-center justify-center overflow-hidden">
+                            <svg viewBox="0 0 200 200" class="w-full h-full text-brand-accent" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <!-- Background gradient cup rim -->
+                                <circle cx="100" cy="100" r="90" fill="#1c130e"/>
+                                <circle cx="100" cy="100" r="75" stroke="#d48d37" stroke-width="8" fill="#3d2417"/>
+                                <!-- Latte Art Rosetta -->
+                                <path d="M100 145 C100 145, 70 120, 70 100 C70 85, 85 80, 100 95 C115 80, 130 85, 130 100 C130 120, 100 145, 100 145 Z" fill="#f8f1e5" opacity="0.9"/>
+                                <path d="M100 130 C100 130, 80 110, 80 95 C80 85, 90 80, 100 90 C110 80, 120 85, 120 95 C120 110, 100 130, 100 130 Z" fill="#f8f1e5"/>
+                                <path d="M100 115 C100 115, 88 100, 88 90 C88 83, 94 80, 100 86 C106 80, 112 83, 112 90 C112 100, 100 115, 100 115 Z" fill="#f8f1e5"/>
+                                <circle cx="100" cy="70" r="5" fill="#f8f1e5"/>
+                                <!-- Coffee Beans -->
+                                <ellipse cx="45" cy="140" rx="12" ry="8" transform="rotate(-30 45 140)" fill="#27160c" stroke="#d48d37" stroke-width="2"/>
+                                <path d="M38 140 Q45 145 52 140" stroke="#d48d37" stroke-width="2" fill="none"/>
+                                <ellipse cx="60" cy="155" rx="11" ry="7" transform="rotate(-10 60 155)" fill="#27160c" stroke="#d48d37" stroke-width="2"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-brand-cream font-serif">SLEEPLESS CAFE</h1>
+                            <span class="bg-brand-accent/20 text-brand-accent text-xs px-2 py-0.5 rounded-full border border-brand-accent/30 font-mono font-medium">SOP v2.4</span>
+                        </div>
+                        <p class="text-xs text-brand-muted flex items-center gap-2">
+                            <span><i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i> Staff Operations & Tambayan Guide</span>
+                            <span class="hidden sm:inline">•</span>
+                            <span class="hidden sm:inline text-green-400"><i class="fa-solid fa-circle text-[8px] mr-1"></i> Live Portal</span>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Action Utilities (Search, Print) -->
+                <div class="flex items-center space-x-2 sm:space-x-3 no-print">
+                    <!-- Global Search Input -->
+                    <div class="relative hidden md:block w-48 lg:w-64">
+                        <input type="text" id="globalSearch" onkeyup="searchManual()" placeholder="Search procedures..." 
+                            class="w-full bg-brand-dark/80 border border-brand-border text-brand-cream text-xs rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:border-brand-accent transition-colors">
+                        <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-xs text-brand-muted"></i>
+                    </div>
+
+                    <button onclick="window.print()" class="bg-brand-card hover:bg-brand-cardHover border border-brand-border text-brand-cream px-3 py-2 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all">
+                        <i class="fa-solid fa-print text-brand-accent"></i>
+                        <span class="hidden sm:inline">Print / Export</span>
+                    </button>
+
+                    <a href="https://www.facebook.com/SleeplessCafePH" target="_blank" rel="noopener noreferrer" 
+                       class="bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 px-3 py-2 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all">
+                        <i class="fa-brands fa-facebook"></i>
+                        <span class="hidden sm:inline">FB Page</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Mobile Search Bar -->
+            <div class="mt-2 md:hidden no-print">
+                <div class="relative w-full">
+                    <input type="text" id="globalSearchMobile" onkeyup="searchManualMobile()" placeholder="Search manual procedures..." 
+                        class="w-full bg-brand-dark/80 border border-brand-border text-brand-cream text-xs rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:border-brand-accent">
+                    <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-xs text-brand-muted"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- NAVIGATION TABS -->
+        <nav class="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 mt-2 overflow-x-auto no-print">
+            <div class="flex space-x-1 sm:space-x-2 pb-2 min-w-max border-t border-brand-border/40 pt-2 text-xs">
+                <button onclick="switchTab('overview')" id="tab-overview" class="nav-btn active px-3.5 py-2 rounded-lg transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-compass"></i>
+                    <span>Overview & Vibe</span>
+                </button>
+                <button onclick="switchTab('roles')" id="tab-roles" class="nav-btn px-3.5 py-2 rounded-lg text-brand-muted hover:text-brand-cream hover:bg-brand-card transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-user-group"></i>
+                    <span>FOH & BOH Roles</span>
+                </button>
+                <button onclick="switchTab('checklists')" id="tab-checklists" class="nav-btn px-3.5 py-2 rounded-lg text-brand-muted hover:text-brand-cream hover:bg-brand-card transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-list-check"></i>
+                    <span>Shift Checklists</span>
+                </button>
+                <button onclick="switchTab('recipes')" id="tab-recipes" class="nav-btn px-3.5 py-2 rounded-lg text-brand-muted hover:text-brand-cream hover:bg-brand-card transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-calculator"></i>
+                    <span>Beverages & Sparklers</span>
+                </button>
+                <button onclick="switchTab('maintenance')" id="tab-maintenance" class="nav-btn px-3.5 py-2 rounded-lg text-brand-muted hover:text-brand-cream hover:bg-brand-card transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-screwdriver-wrench"></i>
+                    <span>Hygiene & Troubleshooting</span>
+                </button>
+                <button onclick="switchTab('cash')" id="tab-cash" class="nav-btn px-3.5 py-2 rounded-lg text-brand-muted hover:text-brand-cream hover:bg-brand-card transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-cash-register"></i>
+                    <span>Cash SOP & Till</span>
+                </button>
+                <!-- R53: the one-way door into the costing tool (M1–M6). Deliberately NOT
+                     classed `nav-btn`: switchTab() greys out every .nav-btn it is not
+                     targeting, which would mute a link that leaves the page. -->
+                <a href="staff.html" id="portal-btn" class="portal-btn flex items-center space-x-2 rounded-lg transition-all">
+                    <i class="fa-solid fa-chart-line text-brand-accent mr-2"></i>
+                    <span class="font-semibold">Staff Reference · Costing Portal</span>
+                </a>
+            </div>
+        </nav>
+    </header>
+
+    <!-- MAIN CONTENT CONTAINER -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- ==================== TAB 1: OVERVIEW & VIBE ==================== -->
+        <section id="sec-overview" class="tab-content space-y-6">
+            <!-- Banner Card -->
+            <div class="glass-panel rounded-2xl p-6 sm:p-8 relative overflow-hidden border-l-4 border-l-brand-accent">
+                <div class="absolute -right-12 -bottom-12 opacity-10 pointer-events-none">
+                    <i class="fa-solid fa-mug-saucer text-[240px] text-brand-accent"></i>
+                </div>
+                <div class="max-w-3xl">
+                    <span class="bg-brand-accent/20 text-brand-accent text-xs font-semibold px-3 py-1 rounded-full uppercase tracking-wider">Brand Culture & Service Philosophy</span>
+                    <h2 class="text-2xl sm:text-4xl font-serif font-bold text-brand-cream mt-3 mb-2">Welcome to your third home.</h2>
+                    <p class="text-brand-muted text-sm sm:text-base leading-relaxed">
+                        <strong class="text-brand-accent">Sleepless Cafe</strong> is designed to be the ultimate local <span class="italic font-serif text-brand-cream">"Tambayan"</span>—a chill, high-vibes space where friends hang out, reset, work, and connect. We serve top-tier coffee, non-coffee craft blends, and sparkling fruit sodas without snobbery.
+                    </p>
+                    <div class="mt-6 flex flex-wrap gap-4 text-xs font-medium">
+                        <div class="flex items-center space-x-2 bg-brand-dark/60 px-3.5 py-2 rounded-lg border border-brand-border">
+                            <i class="fa-solid fa-bolt text-brand-accent"></i>
+                            <span>Concept: Cool, Unpretentious & Chill</span>
+                        </div>
+                        <div class="flex items-center space-x-2 bg-brand-dark/60 px-3.5 py-2 rounded-lg border border-brand-border">
+                            <i class="fa-solid fa-users text-brand-accent"></i>
+                            <span>Team Structure: 2-Person Synchronized Crew</span>
+                        </div>
+                        <div class="flex items-center space-x-2 bg-brand-dark/60 px-3.5 py-2 rounded-lg border border-brand-border">
+                            <i class="fa-solid fa-glass-water text-brand-accent"></i>
+                            <span>Menu: Espresso, Non-Coffee & Sparklers (No Food)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Service Standards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- 3-Second Rule -->
+                <div class="glass-card rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="w-10 h-10 rounded-lg bg-brand-accent/20 flex items-center justify-center text-brand-accent text-lg mb-4">
+                            <i class="fa-solid fa-stopwatch"></i>
+                        </div>
+                        <h3 class="text-base font-bold text-brand-cream mb-2">The 3-Second Rule</h3>
+                        <p class="text-xs text-brand-muted leading-relaxed">
+                            Greet every customer within 3 seconds of stepping through the door. A quick, genuine <span class="text-brand-accent font-semibold">"Hey! Welcome to Sleepless!"</span> instantly establishes our warm, friendly vibe.
+                        </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-brand-border/40 text-[11px] text-brand-accent font-medium flex items-center">
+                        <i class="fa-solid fa-circle-check mr-1.5"></i> Makes guests feel noticed immediately
+                    </div>
+                </div>
+
+                <!-- Tambayan Ambience -->
+                <div class="glass-card rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="w-10 h-10 rounded-lg bg-brand-accent/20 flex items-center justify-center text-brand-accent text-lg mb-4">
+                            <i class="fa-solid fa-music"></i>
+                        </div>
+                        <h3 class="text-base font-bold text-brand-cream mb-2">Ambience & Soundscape</h3>
+                        <p class="text-xs text-brand-muted leading-relaxed">
+                            Keep background music tailored to the hour (chill lofi / acoustic pop in morning, warm upbeat indie in afternoon). Temperature should remain crisp (22°C–24°C).
+                        </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-brand-border/40 text-[11px] text-brand-accent font-medium flex items-center">
+                        <i class="fa-solid fa-sliders mr-1.5"></i> Controlled by FOH Specialist
+                    </div>
+                </div>
+
+                <!-- Feedback Handling -->
+                <div class="glass-card rounded-xl p-5 flex flex-col justify-between">
+                    <div>
+                        <div class="w-10 h-10 rounded-lg bg-brand-accent/20 flex items-center justify-center text-brand-accent text-lg mb-4">
+                            <i class="fa-solid fa-handshake-angle"></i>
+                        </div>
+                        <h3 class="text-base font-bold text-brand-cream mb-2">Graceful Remakes</h3>
+                        <p class="text-xs text-brand-muted leading-relaxed">
+                            If a guest is unhappy with a drink taste, never argue. Listen intently, apologize warmly, and remake the drink on the house right away or suggest a preferred alternative.
+                        </p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-brand-border/40 text-[11px] text-brand-accent font-medium flex items-center">
+                        <i class="fa-solid fa-heart mr-1.5"></i> Priority: Customer retention > drink cost
+                    </div>
+                </div>
+            </div>
+
+            <!-- Workflow Visual Overview -->
+            <div class="glass-panel rounded-xl p-6">
+                <h3 class="text-lg font-bold font-serif text-brand-cream mb-4 flex items-center">
+                    <i class="fa-solid fa-diagram-project text-brand-accent mr-2.5"></i> The 2-Person Synchronized Flow
+                </h3>
+                <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 text-xs">
+                    <div class="bg-brand-dark/70 p-4 rounded-lg border border-brand-border relative">
+                        <span class="absolute top-2 right-2 text-[10px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.5 rounded font-mono">Step 1</span>
+                        <div class="font-bold text-brand-cream mb-1">Greeting & POS</div>
+                        <p class="text-brand-muted">FOH greets guest, inputs order in POS, collects cash/e-payment, and calls order out clearly to BOH.</p>
+                    </div>
+                    <div class="bg-brand-dark/70 p-4 rounded-lg border border-brand-border relative">
+                        <span class="absolute top-2 right-2 text-[10px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.5 rounded font-mono">Step 2</span>
+                        <div class="font-bold text-brand-cream mb-1">Dual Execution</div>
+                        <p class="text-brand-muted">BOH pulls espresso shots / steams milk. FOH builds sparklers/soda drinks or manages guest seating.</p>
+                    </div>
+                    <div class="bg-brand-dark/70 p-4 rounded-lg border border-brand-border relative">
+                        <span class="absolute top-2 right-2 text-[10px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.5 rounded font-mono">Step 3</span>
+                        <div class="font-bold text-brand-cream mb-1">Staging & QC</div>
+                        <p class="text-brand-muted">BOH passes finished espresso items to staging counter. FOH double-checks order completeness and wipes cup drips.</p>
+                    </div>
+                    <div class="bg-brand-dark/70 p-4 rounded-lg border border-brand-border relative">
+                        <span class="absolute top-2 right-2 text-[10px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.5 rounded font-mono">Step 4</span>
+                        <div class="font-bold text-brand-cream mb-1">Warm Handoff</div>
+                        <p class="text-brand-muted">FOH calls guest's name, hands over drinks with straws/napkins, and invites them to enjoy their stay.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 2: ROLES & DIVISION ==================== -->
+        <section id="sec-roles" class="tab-content space-y-6 hidden">
+            <!-- Toggle Selector -->
+            <div class="flex justify-center my-2">
+                <div class="bg-brand-card p-1 rounded-xl border border-brand-border inline-flex space-x-1 text-xs">
+                    <button onclick="toggleRole('foh')" id="role-btn-foh" class="px-5 py-2 rounded-lg font-bold transition-all bg-brand-accent text-brand-dark shadow">
+                        <i class="fa-solid fa-user-tie mr-1.5"></i> FOH Specialist (Front)
+                    </button>
+                    <button onclick="toggleRole('boh')" id="role-btn-boh" class="px-5 py-2 rounded-lg font-bold text-brand-muted hover:text-brand-cream transition-all">
+                        <i class="fa-solid fa-mug-hot mr-1.5"></i> BOH Specialist (Bar)
+                    </button>
+                </div>
+            </div>
+
+            <!-- FOH Details Card -->
+            <div id="role-card-foh" class="glass-panel rounded-2xl p-6 space-y-6">
+                <div class="flex items-center justify-between border-b border-brand-border/60 pb-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl">
+                            <i class="fa-solid fa-concierge-bell"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold font-serif text-brand-cream">Front of House (FOH) Specialist</h2>
+                            <p class="text-xs text-brand-muted">Primary Focus: Customer Experience, POS, Sparklers, Lounge Vibes</p>
+                        </div>
+                    </div>
+                    <span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs px-3 py-1 rounded-full font-medium">Guest Facing</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+                    <div class="space-y-3">
+                        <h3 class="font-bold text-brand-cream text-sm flex items-center text-brand-accent">
+                            <i class="fa-solid fa-circle-dot mr-2"></i> Key Operational Responsibilities
+                        </h3>
+                        <ul class="space-y-2.5 text-brand-muted">
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>POS & Cashier:</strong> Greet customers instantly, take orders accurately, collect payments (cash/E-wallets).</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Sparkler & Soda Station:</strong> Craft all fruit syrup and sparkling soda drinks with perfect layering.</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Lounge Maintenance:</strong> Clear tables promptly after guests leave; keep seating area spotlessly clean.</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Vibe Control:</strong> Manage background music playlists and maintain comfortable aircon cooling.</span></li>
+                        </ul>
+                    </div>
+
+                    <div class="space-y-3">
+                        <h3 class="font-bold text-brand-cream text-sm flex items-center text-brand-accent">
+                            <i class="fa-solid fa-comments mr-2"></i> Order Call-Out Standards
+                        </h3>
+                        <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border space-y-2">
+                            <p class="text-brand-cream font-mono">"Order for [Name]: 1 Iced Spanish Latte, 1 Passionfruit Sparkler!"</p>
+                            <p class="text-brand-muted leading-relaxed">Always state guest name, drink size, milk modifications (e.g. Oat milk), and temperature clearly so BOH can queue shots immediately.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BOH Details Card (Hidden by default) -->
+            <div id="role-card-boh" class="glass-panel rounded-2xl p-6 space-y-6 hidden">
+                <div class="flex items-center justify-between border-b border-brand-border/60 pb-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-12 h-12 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center text-xl">
+                            <i class="fa-solid fa-filter"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold font-serif text-brand-cream">Back of House (BOH) / Bar Specialist</h2>
+                            <p class="text-xs text-brand-muted">Primary Focus: Espresso Dial-in, Milk Texture, Speed on Bar, QC</p>
+                        </div>
+                    </div>
+                    <span class="bg-orange-500/10 text-orange-400 border border-orange-500/20 text-xs px-3 py-1 rounded-full font-medium">Production Bar</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+                    <div class="space-y-3">
+                        <h3 class="font-bold text-brand-cream text-sm flex items-center text-brand-accent">
+                            <i class="fa-solid fa-circle-dot mr-2"></i> Key Operational Responsibilities
+                        </h3>
+                        <ul class="space-y-2.5 text-brand-muted">
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Espresso Calibration:</strong> Dial in grinder every morning (18 g in → 36 g out in 27–30 s).</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Beverage Production:</strong> Pull espresso shots, steam silky microfoam milk, craft Matcha & Chocolate blends.</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Bar Cleanliness:</strong> Purge and wipe steam wand before & after every pitcher. Keep drip tray clean.</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-check text-brand-accent mr-2 mt-0.5"></i> <span><strong>Inventory Watch:</strong> Monitor ice bin level, espresso bean hopper level, and milk fridge stock.</span></li>
+                        </ul>
+                    </div>
+
+                    <div class="space-y-3">
+                        <h3 class="font-bold text-brand-cream text-sm flex items-center text-brand-accent">
+                            <i class="fa-solid fa-triangle-exclamation mr-2"></i> Cross-Training & Rush Rules
+                        </h3>
+                        <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border space-y-2">
+                            <p class="text-brand-cream font-semibold">The "All-Rounder" Shift Rule:</p>
+                            <p class="text-brand-muted leading-relaxed">During peak rushes (&gt;5 customers in queue), FOH can pull espresso shots while BOH helps hand off sparklers or wipe tables. Both roles must be cross-trained!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 3: SHIFT CHECKLISTS ==================== -->
+        <section id="sec-checklists" class="tab-content space-y-6 hidden">
+            <!-- Progress Tracker Bar -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-lg bg-brand-accent/20 flex items-center justify-center text-brand-accent font-bold">
+                        <i class="fa-solid fa-tasks"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-brand-cream">Shift Tasks Completion</h3>
+                        <p class="text-xs text-brand-muted" id="checklist-status-text">0 of 15 tasks completed</p>
+                    </div>
+                </div>
+                <div class="w-full sm:w-64 bg-brand-dark rounded-full h-3 border border-brand-border p-0.5">
+                    <div id="checklist-progress-bar" class="bg-gradient-to-r from-brand-accent to-amber-400 h-full rounded-full transition-all duration-300" style="width: 0%;"></div>
+                </div>
+                <button onclick="resetChecklists()" class="text-xs text-brand-muted hover:text-brand-accent transition-colors underline">
+                    Reset Checklists
+                </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Opening Checklist -->
+                <div class="glass-card rounded-xl p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-brand-border/40 pb-3">
+                        <h3 class="font-bold text-brand-cream flex items-center text-sm">
+                            <i class="fa-solid fa-sun text-amber-400 mr-2"></i> Opening (30m Before)
+                        </h3>
+                        <span class="text-[10px] bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded font-mono">07:30 AM</span>
+                    </div>
+                    <div class="space-y-2.5 text-xs">
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Disarm alarm, inspect shop, turn on main lights.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Turn on Espresso Machine & Grinders to warm up.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Count opening cash float (₱3,000 exact).</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Dial in espresso (18 g in → 36 g out in 27–30 s).</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Fill ice bins & restock whole/oat milks & syrups.</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Mid-Day Handover Checklist -->
+                <div class="glass-card rounded-xl p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-brand-border/40 pb-3">
+                        <h3 class="font-bold text-brand-cream flex items-center text-sm">
+                            <i class="fa-solid fa-arrows-rotate text-blue-400 mr-2"></i> Mid-Day Shift Handover
+                        </h3>
+                        <span class="text-[10px] bg-blue-400/10 text-blue-400 px-2 py-0.5 rounded font-mono">12:30 PM</span>
+                    </div>
+                    <div class="space-y-2.5 text-xs">
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Wipe down espresso drip tray & syrup station.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Top up ice bin, cup stacks, and lid dispensers.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Perform mid-day till check & drop safe excess cash.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Check restroom paper towels, soap & trash bin.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Replace color-coded station wiping towels.</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Closing Checklist -->
+                <div class="glass-card rounded-xl p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-brand-border/40 pb-3">
+                        <h3 class="font-bold text-brand-cream flex items-center text-sm">
+                            <i class="fa-solid fa-moon text-indigo-400 mr-2"></i> Closing (30m After)
+                        </h3>
+                        <span class="text-[10px] bg-indigo-400/10 text-indigo-400 px-2 py-0.5 rounded font-mono">10:30 PM</span>
+                    </div>
+                    <div class="space-y-2.5 text-xs">
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Backflush group heads with Cafiza cleaning powder.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Empty bean hopper into airtight pouch; brush burrs.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Flush syrup pump nozzles with warm water to prevent clogs.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Sweep & mop floor; clear all lounge trash bins.</span>
+                        </label>
+                        <label class="flex items-start space-x-2.5 cursor-pointer group">
+                            <input type="checkbox" onchange="updateChecklistProgress()" class="chk-item hidden checkbox-custom">
+                            <div class="w-4 h-4 rounded border border-brand-border bg-brand-dark group-hover:border-brand-accent flex items-center justify-center mt-0.5 transition-colors">
+                                <i class="fa-solid fa-check text-[10px] text-brand-dark hidden"></i>
+                            </div>
+                            <span class="text-brand-muted group-hover:text-brand-cream transition-colors">Run POS Z-Report, count cash, lock up premises.</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 4: BEVERAGES & SPARKLERS ==================== -->
+        <section id="sec-recipes" class="tab-content space-y-6 hidden">
+            <!-- Espresso Dial-In Matrix -->
+            <div class="glass-panel rounded-2xl p-6">
+                <h2 class="text-lg font-serif font-bold text-brand-cream mb-4 flex items-center">
+                    <i class="fa-solid fa-mug-hot text-brand-accent mr-2.5"></i> Espresso Quality Parameters & Dial-In
+                </h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border text-center">
+                        <span class="text-brand-muted text-[11px] block uppercase font-mono">Dose (Coffee In)</span>
+                        <span class="text-2xl font-bold text-brand-cream my-1 block">18.0 g</span>
+                        <span class="text-[10px] text-brand-accent">Precision digital scale</span>
+                    </div>
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border text-center">
+                        <span class="text-brand-muted text-[11px] block uppercase font-mono">Yield (Liquid Out)</span>
+                        <span class="text-2xl font-bold text-brand-cream my-1 block">36.0 g</span>
+                        <span class="text-[10px] text-brand-accent">1:2 Standard Ratio</span>
+                    </div>
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border text-center">
+                        <span class="text-brand-muted text-[11px] block uppercase font-mono">Shot Time</span>
+                        <span class="text-2xl font-bold text-brand-cream my-1 block">27 - 30 s</span>
+                        <span class="text-[10px] text-brand-accent">Target Extraction Window</span>
+                    </div>
+                </div>
+
+                <!-- Dial-in Troubleshooter -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div class="bg-red-950/20 border border-red-500/20 p-4 rounded-xl">
+                        <div class="font-bold text-red-300 mb-1 flex items-center">
+                            <i class="fa-solid fa-gauge-high mr-1.5"></i> Shot Runs Too Fast (&lt; 25s)
+                        </div>
+                        <p class="text-brand-muted leading-relaxed mb-2">Taste: Sour, thin body, watery cremma.</p>
+                        <div class="bg-brand-dark p-2 rounded text-brand-cream font-mono font-semibold">
+                            <i class="fa-solid fa-arrow-right text-brand-accent mr-1"></i> Solution: Adjust grinder FINER
+                        </div>
+                    </div>
+                    <div class="bg-amber-950/20 border border-amber-500/20 p-4 rounded-xl">
+                        <div class="font-bold text-amber-300 mb-1 flex items-center">
+                            <i class="fa-solid fa-gauge-simple-low mr-1.5"></i> Shot Runs Too Slow (&gt; 32s)
+                        </div>
+                        <p class="text-brand-muted leading-relaxed mb-2">Taste: Bitter, harsh, astringent, burnt.</p>
+                        <div class="bg-brand-dark p-2 rounded text-brand-cream font-mono font-semibold">
+                            <i class="fa-solid fa-arrow-right text-brand-accent mr-1"></i> Solution: Adjust grinder COARSER
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- INTERACTIVE SPARKLER & SODA CALCULATOR -->
+            <div class="glass-panel rounded-2xl p-6 border-t-2 border-t-brand-accent">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <span class="bg-brand-accent/20 text-brand-accent text-xs font-semibold px-2.5 py-1 rounded font-mono">Interactive Tool</span>
+                        <h2 class="text-xl font-serif font-bold text-brand-cream mt-1">Sparkling Soda & Fruit Syrup Ratio Builder</h2>
+                        <p class="text-xs text-brand-muted">Select cup size and flavor to output precise syrup, ice, and sparkling water specs.</p>
+                    </div>
+
+                    <div class="flex items-center space-x-2 bg-brand-dark/80 p-1.5 rounded-xl border border-brand-border text-xs">
+                        <button onclick="setCupSize(12)" id="btn-cup-12" class="px-3 py-1.5 rounded-lg transition-all font-semibold text-brand-muted">12 oz Cup</button>
+                        <button onclick="setCupSize(16)" id="btn-cup-16" class="px-3 py-1.5 rounded-lg transition-all font-semibold bg-brand-accent text-brand-dark shadow">16 oz Cup</button>
+                        <button onclick="setCupSize(22)" id="btn-cup-22" class="px-3 py-1.5 rounded-lg transition-all font-semibold text-brand-muted">22 oz Cup</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Flavor Selector -->
+                    <div class="space-y-3">
+                        <label class="text-xs font-bold text-brand-cream block">Select Sparkler Flavor:</label>
+                        <div class="space-y-2 text-xs">
+                            <button onclick="calculateSparkler('Passionfruit', '#f59e0b', 'Mint sprig + Lemon wheel')" class="sparkler-opt w-full text-left p-3 rounded-xl border border-brand-border bg-brand-card hover:bg-brand-cardHover transition-all flex items-center justify-between group">
+                                <span class="font-medium text-brand-cream group-hover:text-brand-accent"><i class="fa-solid fa-lemon text-amber-400 mr-2"></i> Passionfruit Sparkler</span>
+                                <i class="fa-solid fa-chevron-right text-brand-muted group-hover:text-brand-accent"></i>
+                            </button>
+                            <button onclick="calculateSparkler('Green Apple', '#10b981', 'Green Apple slice + Mint')" class="sparkler-opt w-full text-left p-3 rounded-xl border border-brand-border bg-brand-card hover:bg-brand-cardHover transition-all flex items-center justify-between group">
+                                <span class="font-medium text-brand-cream group-hover:text-brand-accent"><i class="fa-solid fa-apple-whole text-emerald-400 mr-2"></i> Green Apple Sparkler</span>
+                                <i class="fa-solid fa-chevron-right text-brand-muted group-hover:text-brand-accent"></i>
+                            </button>
+                            <button onclick="calculateSparkler('Lychee Berry', '#ec4899', 'Maraschino Cherry + Rosemary')" class="sparkler-opt w-full text-left p-3 rounded-xl border border-brand-border bg-brand-card hover:bg-brand-cardHover transition-all flex items-center justify-between group">
+                                <span class="font-medium text-brand-cream group-hover:text-brand-accent"><i class="fa-solid fa-wine-glass text-pink-400 mr-2"></i> Lychee Berry Sparkler</span>
+                                <i class="fa-solid fa-chevron-right text-brand-muted group-hover:text-brand-accent"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Ratio Output Display -->
+                    <div class="lg:col-span-2 bg-brand-dark/90 p-5 rounded-xl border border-brand-border flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between border-b border-brand-border pb-3 mb-4">
+                                <div id="sparkler-title-display" class="font-bold text-brand-cream text-base flex items-center">
+                                    <i class="fa-solid fa-glass-water text-brand-accent mr-2"></i> Passionfruit Sparkler Build Specs
+                                </div>
+                                <span id="sparkler-cup-badge" class="bg-brand-accent/20 text-brand-accent text-xs font-mono px-2.5 py-0.5 rounded">16 oz Cup</span>
+                            </div>
+
+                            <div class="grid grid-cols-3 gap-3 text-center mb-4">
+                                <div class="bg-brand-card p-3 rounded-lg border border-brand-border">
+                                    <span class="text-[10px] text-brand-muted uppercase block">Fruit Syrup</span>
+                                    <span id="out-syrup" class="text-xl font-bold text-brand-accent mt-0.5 block">30 mL</span>
+                                    <span id="out-pumps" class="text-[10px] text-brand-muted">(2 Pumps)</span>
+                                </div>
+                                <div class="bg-brand-card p-3 rounded-lg border border-brand-border">
+                                    <span class="text-[10px] text-brand-muted uppercase block">Ice Level</span>
+                                    <span id="out-ice" class="text-xl font-bold text-blue-300 mt-0.5 block">100% Full</span>
+                                    <span class="text-[10px] text-brand-muted">(Solid Ice Base)</span>
+                                </div>
+                                <div class="bg-brand-card p-3 rounded-lg border border-brand-border">
+                                    <span class="text-[10px] text-brand-muted uppercase block">Sparkling Soda</span>
+                                    <span id="out-soda" class="text-xl font-bold text-brand-cream mt-0.5 block">180 mL</span>
+                                    <span class="text-[10px] text-brand-muted">(To Rim)</span>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2 text-xs">
+                                <div class="flex items-start space-x-2">
+                                    <span class="bg-brand-accent/30 text-brand-accent font-bold px-1.5 py-0.5 rounded text-[10px]">1</span>
+                                    <span class="text-brand-muted">Pump fruit syrup directly into bottom of glass.</span>
+                                </div>
+                                <div class="flex items-start space-x-2">
+                                    <span class="bg-brand-accent/30 text-brand-accent font-bold px-1.5 py-0.5 rounded text-[10px]">2</span>
+                                    <span class="text-brand-muted">Fill glass completely with ice cubes to create layered gradient separation.</span>
+                                </div>
+                                <div class="flex items-start space-x-2">
+                                    <span class="bg-brand-accent/30 text-brand-accent font-bold px-1.5 py-0.5 rounded text-[10px]">3</span>
+                                    <span class="text-brand-muted">Pour chilled sparkling soda water slowly down the side.</span>
+                                </div>
+                                <div class="flex items-start space-x-2">
+                                    <span class="bg-brand-accent/30 text-brand-accent font-bold px-1.5 py-0.5 rounded text-[10px]">4</span>
+                                    <span id="out-garnish" class="text-brand-cream font-medium">Garnish: Mint sprig + Lemon wheel on top.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 pt-3 border-t border-brand-border/60 text-[11px] text-brand-accent flex items-center justify-between">
+                            <span><i class="fa-solid fa-circle-info mr-1"></i> Remind customer to stir well before drinking!</span>
+                            <span class="italic text-brand-muted">Clean Layered Presentation</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 5: HYGIENE & TROUBLESHOOTING ==================== -->
+        <section id="sec-maintenance" class="tab-content space-y-6 hidden">
+            <!-- Towel Sanitization System -->
+            <div class="glass-panel rounded-2xl p-6">
+                <h2 class="text-lg font-serif font-bold text-brand-cream mb-2 flex items-center">
+                    <i class="fa-solid fa-broom text-brand-accent mr-2.5"></i> Color-Coded Towel Sanitization System
+                </h2>
+                <p class="text-xs text-brand-muted mb-6">Cross-contamination can ruin customer safety. Towels must strictly adhere to designated zones:</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                    <!-- Blue Towel -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-blue-500/30 relative overflow-hidden">
+                        <div class="w-2 h-full bg-blue-500 absolute left-0 top-0"></div>
+                        <div class="pl-2">
+                            <span class="font-bold text-blue-400 text-sm block mb-1">BLUE TOWEL</span>
+                            <span class="bg-blue-500/20 text-blue-300 text-[10px] px-2 py-0.5 rounded font-mono font-bold block mb-2">STEAM WAND ONLY</span>
+                            <p class="text-brand-muted leading-relaxed">Keep damp. Use exclusively to purge & wipe milk residue off steam wands. Replace every 2 hrs.</p>
+                        </div>
+                    </div>
+
+                    <!-- Yellow Towel -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-amber-500/30 relative overflow-hidden">
+                        <div class="w-2 h-full bg-amber-500 absolute left-0 top-0"></div>
+                        <div class="pl-2">
+                            <span class="font-bold text-amber-400 text-sm block mb-1">YELLOW TOWEL</span>
+                            <span class="bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0.5 rounded font-mono font-bold block mb-2">ESPRESSO BAR SURFACE</span>
+                            <p class="text-brand-muted leading-relaxed">Used for portafilter basket wiping and espresso grinder tray clean up.</p>
+                        </div>
+                    </div>
+
+                    <!-- Green Towel -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-emerald-500/30 relative overflow-hidden">
+                        <div class="w-2 h-full bg-emerald-500 absolute left-0 top-0"></div>
+                        <div class="pl-2">
+                            <span class="font-bold text-emerald-400 text-sm block mb-1">GREEN TOWEL</span>
+                            <span class="bg-emerald-500/20 text-emerald-300 text-[10px] px-2 py-0.5 rounded font-mono font-bold block mb-2">FOH SYRUP & SODA BAR</span>
+                            <p class="text-brand-muted leading-relaxed">Wiping fruit syrup sticky drips, sparkling water station, and register counters.</p>
+                        </div>
+                    </div>
+
+                    <!-- White Towel -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-slate-300/30 relative overflow-hidden">
+                        <div class="w-2 h-full bg-slate-300 absolute left-0 top-0"></div>
+                        <div class="pl-2">
+                            <span class="font-bold text-slate-200 text-sm block mb-1">WHITE TOWEL</span>
+                            <span class="bg-slate-300/20 text-slate-200 text-[10px] px-2 py-0.5 rounded font-mono font-bold block mb-2">LOUNGE & TABLES</span>
+                            <p class="text-brand-muted leading-relaxed">Sanitizing seating tables and lounge chairs between customer visits.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Equipment Maintenance Guide -->
+            <div class="glass-panel rounded-2xl p-6">
+                <h2 class="text-lg font-serif font-bold text-brand-cream mb-4 flex items-center">
+                    <i class="fa-solid fa-wrench text-brand-accent mr-2.5"></i> Equipment Maintenance & Troubleshooting
+                </h2>
+
+                <div class="space-y-4 text-xs">
+                    <!-- Issue 1 -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <div class="font-bold text-brand-cream flex items-center">
+                                <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-2"></i> Issue: Clogged Fruit Syrup Pump
+                            </div>
+                            <p class="text-brand-muted">Pump stem gets sticky, stuck down, or dispenses uneven syrup volume.</p>
+                        </div>
+                        <div class="bg-brand-card p-3 rounded-lg border border-brand-border md:w-96 flex-shrink-0">
+                            <span class="font-semibold text-brand-accent block mb-1">SOP Fix Action:</span>
+                            <p class="text-brand-muted leading-relaxed">Remove pump mechanism. Submerge in warm water (60°C) for 5 mins. Pump warm water through mechanism until clear, dry, and reattach.</p>
+                        </div>
+                    </div>
+
+                    <!-- Issue 2 -->
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div class="space-y-1">
+                            <div class="font-bold text-brand-cream flex items-center">
+                                <i class="fa-solid fa-triangle-exclamation text-amber-400 mr-2"></i> Issue: Espresso Group Head Pressure Drop
+                            </div>
+                            <p class="text-brand-muted">Extraction gauge drops below standard 9-bar pressure during shot pull.</p>
+                        </div>
+                        <div class="bg-brand-card p-3 rounded-lg border border-brand-border md:w-96 flex-shrink-0">
+                            <span class="font-semibold text-brand-accent block mb-1">SOP Fix Action:</span>
+                            <p class="text-brand-muted leading-relaxed">Inspect water inlet hose line for kinks. Brush group head rubber gasket to clear compressed grounds. If unresolved, contact shop owner.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== TAB 6: CASH SOP & TILL ==================== -->
+        <section id="sec-cash" class="tab-content space-y-6 hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Cash Rules Card -->
+                <div class="lg:col-span-2 glass-panel rounded-2xl p-6 space-y-4">
+                    <h2 class="text-lg font-serif font-bold text-brand-cream flex items-center">
+                        <i class="fa-solid fa-coins text-brand-accent mr-2.5"></i> Cash Handling & Till Policy
+                    </h2>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                        <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border">
+                            <span class="text-brand-accent font-bold block mb-1 text-sm">Opening Cash Float</span>
+                            <p class="text-brand-muted leading-relaxed">
+                                Register float starts at exactly <strong class="text-brand-cream">₱3,000.00</strong> in small denominations (₱20, ₱50, ₱100 bills and coins). Verify and log every morning before doors open.
+                            </p>
+                        </div>
+
+                        <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border">
+                            <span class="text-brand-accent font-bold block mb-1 text-sm">Safe Drop Rule</span>
+                            <p class="text-brand-muted leading-relaxed">
+                                Whenever total cash in drawer exceeds <strong class="text-brand-cream">₱10,000.00</strong>, FOH must conduct a mid-day cash drop into the secure drop safe to minimize counter risk.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="bg-brand-dark/80 p-4 rounded-xl border border-brand-border text-xs space-y-2">
+                        <span class="font-bold text-brand-cream block text-sm">Discrepancy SOP Protocol:</span>
+                        <ul class="space-y-1.5 text-brand-muted">
+                            <li class="flex items-start"><i class="fa-solid fa-caret-right text-brand-accent mr-2 mt-0.5"></i> <span><strong>Minor Variance (≤ ±₱100):</strong> Record in shift log with note (e.g. *"Incorrect change during lunch rush"*).</span></li>
+                            <li class="flex items-start"><i class="fa-solid fa-caret-right text-brand-accent mr-2 mt-0.5"></i> <span><strong>Major Variance (&gt; ±₱100):</strong> Re-count cash together (FOH & BOH), cross-check digital e-wallet sales, and notify manager immediately.</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- END OF DAY TILL CALCULATOR -->
+                <div class="glass-panel rounded-2xl p-6 space-y-4">
+                    <h3 class="font-bold text-brand-cream text-sm flex items-center">
+                        <i class="fa-solid fa-calculator text-brand-accent mr-2"></i> EOD Cash Ring-Out Calculator
+                    </h3>
+
+                    <div class="space-y-3 text-xs">
+                        <div>
+                            <label class="text-brand-muted block mb-1">Total Cash in Drawer (₱):</label>
+                            <input type="number" id="calc-cash-total" oninput="calculateEOD()" placeholder="e.g. 8500" 
+                                class="w-full bg-brand-dark border border-brand-border rounded-lg px-3 py-2 text-brand-cream focus:outline-none focus:border-brand-accent">
+                        </div>
+
+                        <div>
+                            <label class="text-brand-muted block mb-1">Opening Float Base (₱):</label>
+                            <input type="number" id="calc-float" value="3000" readonly 
+                                class="w-full bg-brand-dark/50 border border-brand-border rounded-lg px-3 py-2 text-brand-muted cursor-not-allowed">
+                        </div>
+
+                        <div>
+                            <label class="text-brand-muted block mb-1">POS Z-Report Net Cash Sales (₱):</label>
+                            <input type="number" id="calc-zreport" oninput="calculateEOD()" placeholder="e.g. 5500" 
+                                class="w-full bg-brand-dark border border-brand-border rounded-lg px-3 py-2 text-brand-cream focus:outline-none focus:border-brand-accent">
+                        </div>
+
+                        <div class="pt-3 border-t border-brand-border/60 space-y-2">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-brand-muted">Calculated Net Cash:</span>
+                                <span id="out-net-cash" class="font-bold text-brand-cream">₱0.00</span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-brand-muted">Variance Status:</span>
+                                <span id="out-variance" class="font-bold text-green-400">Balancing Ready</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="glass-panel border-t border-brand-border/60 py-4 mt-auto no-print">
+        <div class="max-w-7xl mx-auto px-4 text-center text-xs text-brand-muted space-y-1">
+            <p><strong class="text-brand-cream">Sleepless Cafe Operational Manual</strong> • Confidential Internal Staff Document</p>
+            <p>Designed for Sleepless Cafe • Cozy Chill-out Tambayan Experience</p>
+        </div>
+    </footer>
+
+    <!-- INTERACTIVE JAVASCRIPT LOGIC -->
+    <script>
+        // Tab Switching Logic
+        function switchTab(tabId) {
+            // Hide all tab content sections
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(el => el.classList.add('hidden'));
+
+            // Remove active style from all navigation buttons
+            const navBtns = document.querySelectorAll('.nav-btn');
+            navBtns.forEach(btn => {
+                btn.classList.remove('active');
+                btn.classList.add('text-brand-muted');
+            });
+
+            // Show selected tab content
+            const target = document.getElementById('sec-' + tabId);
+            if (target) target.classList.remove('hidden');
+
+            // Highlight active navigation tab
+            const activeBtn = document.getElementById('tab-' + tabId);
+            if (activeBtn) {
+                activeBtn.classList.add('active');
+                activeBtn.classList.remove('text-brand-muted');
+            }
+        }
+
+        // FOH vs BOH Role Switcher
+        function toggleRole(role) {
+            const cardFoh = document.getElementById('role-card-foh');
+            const cardBoh = document.getElementById('role-card-boh');
+            const btnFoh = document.getElementById('role-btn-foh');
+            const btnBoh = document.getElementById('role-btn-boh');
+
+            if (role === 'foh') {
+                cardFoh.classList.remove('hidden');
+                cardBoh.classList.add('hidden');
+                btnFoh.className = "px-5 py-2 rounded-lg font-bold transition-all bg-brand-accent text-brand-dark shadow";
+                btnBoh.className = "px-5 py-2 rounded-lg font-bold text-brand-muted hover:text-brand-cream transition-all";
+            } else {
+                cardBoh.classList.remove('hidden');
+                cardFoh.classList.add('hidden');
+                btnBoh.className = "px-5 py-2 rounded-lg font-bold transition-all bg-brand-accent text-brand-dark shadow";
+                btnFoh.className = "px-5 py-2 rounded-lg font-bold text-brand-muted hover:text-brand-cream transition-all";
+            }
+        }
+
+        // Shift Checklist Progress Bar
+        function updateChecklistProgress() {
+            const allCheckboxes = document.querySelectorAll('.chk-item');
+            let checkedCount = 0;
+            allCheckboxes.forEach(chk => {
+                if (chk.checked) checkedCount++;
+            });
+
+            const total = allCheckboxes.length;
+            const percentage = Math.round((checkedCount / total) * 100);
+
+            document.getElementById('checklist-progress-bar').style.width = percentage + '%';
+            document.getElementById('checklist-status-text').innerText = `${checkedCount} of ${total} tasks completed (${percentage}%)`;
+        }
+
+        function resetChecklists() {
+            const allCheckboxes = document.querySelectorAll('.chk-item');
+            allCheckboxes.forEach(chk => chk.checked = false);
+            updateChecklistProgress();
+        }
+
+        // Sparkler Calculator Engine
+        let currentCupSize = 16;
+        let currentFlavor = 'Passionfruit';
+        let currentGarnish = 'Mint sprig + Lemon wheel';
+
+        function setCupSize(size) {
+            currentCupSize = size;
+            [12, 16, 22].forEach(s => {
+                const btn = document.getElementById('btn-cup-' + s);
+                if (s === size) {
+                    btn.className = "px-3 py-1.5 rounded-lg transition-all font-semibold bg-brand-accent text-brand-dark shadow";
+                } else {
+                    btn.className = "px-3 py-1.5 rounded-lg transition-all font-semibold text-brand-muted";
+                }
+            });
+            calculateSparkler(currentFlavor, '#f59e0b', currentGarnish);
+        }
+
+        function calculateSparkler(flavor, colorHex, garnish) {
+            currentFlavor = flavor;
+            currentGarnish = garnish;
+
+            document.getElementById('sparkler-title-display').innerHTML = `<i class="fa-solid fa-glass-water text-brand-accent mr-2"></i> ${flavor} Sparkler Build Specs`;
+            document.getElementById('sparkler-cup-badge').innerText = `${currentCupSize} oz Cup`;
+
+            let syrupML = 30;
+            let pumps = "(2 Pumps)";
+            let sodaML = 180;
+
+            if (currentCupSize === 12) {
+                syrupML = 22.5;
+                pumps = "(1.5 Pumps)";
+                sodaML = 130;
+            } else if (currentCupSize === 22) {
+                syrupML = 45;
+                pumps = "(3 Pumps)";
+                sodaML = 240;
+            }
+
+            document.getElementById('out-syrup').innerText = `${syrupML} mL`;
+            document.getElementById('out-pumps').innerText = pumps;
+            document.getElementById('out-soda').innerText = `${sodaML} mL`;
+            document.getElementById('out-garnish').innerText = `Garnish: ${garnish}`;
+        }
+
+        // EOD Till Calculator
+        function calculateEOD() {
+            const cashTotal = parseFloat(document.getElementById('calc-cash-total').value) || 0;
+            const floatBase = 3000;
+            const zReport = parseFloat(document.getElementById('calc-zreport').value) || 0;
+
+            const netCash = cashTotal - floatBase;
+            const variance = netCash - zReport;
+
+            document.getElementById('out-net-cash').innerText = `₱${netCash.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+
+            const varEl = document.getElementById('out-variance');
+            if (variance === 0 && cashTotal > 0) {
+                varEl.innerText = "Exact Balance (₱0.00)";
+                varEl.className = "font-bold text-green-400";
+            } else if (variance > 0) {
+                varEl.innerText = `Over by +₱${variance.toFixed(2)}`;
+                varEl.className = "font-bold text-amber-400";
+            } else if (variance < 0) {
+                varEl.innerText = `Short by -₱${Math.abs(variance).toFixed(2)}`;
+                varEl.className = "font-bold text-red-400";
+            } else {
+                varEl.innerText = "Balancing Ready";
+                varEl.className = "font-bold text-brand-muted";
+            }
+        }
+
+        // Search Filter Logic
+        function searchManual() {
+            const query = document.getElementById('globalSearch').value.toLowerCase();
+            filterContent(query);
+        }
+
+        function searchManualMobile() {
+            const query = document.getElementById('globalSearchMobile').value.toLowerCase();
+            filterContent(query);
+        }
+
+        function filterContent(query) {
+            if (!query) return;
+            // Switch to overview or relevant section if query found
+            const sections = document.querySelectorAll('.tab-content');
+            sections.forEach(sec => sec.classList.remove('hidden'));
+        }
+    </script>
+</body>
+</html>

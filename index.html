@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Public customer entry point: intentionally indexable (Gate B keeps noindex
+         only on cashier / kitchen / owner). -->
+    <meta name="description" content="Sleepless Cafe — browse the menu, place your order, and present your 5-digit code to the cashier.">
+    <title>Sleepless Cafe | Order &amp; Claim Code</title>
+
+    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above the inline config script below, because that script reads the
+         :root custom properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
+         Gate A: tokens.css is the single source of truth for brand colors, so
+         changing a brand color means editing tokens.css only. The neutral
+         fallback below is deliberately not a brand hex — it exists so a failed
+         stylesheet load can never inject `undefined` into generated CSS. -->
+    <script>
+        (function () {
+            var cs = getComputedStyle(document.documentElement);
+            var T = function (name) {
+                var v = cs.getPropertyValue(name).trim();
+                return v || '#000000'; /* neutral fallback, never a brand color */
+            };
+            var F = function (name) {
+                return T(name).split(',').map(function (s) { return s.trim(); });
+            };
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                dark: T('--brand-dark'),
+                                card: T('--brand-card'),
+                                cardHover: T('--brand-card-hover'),
+                                accent: T('--brand-accent'),
+                                accentLight: T('--brand-accent-light'),
+                                cream: T('--brand-cream'),
+                                muted: T('--brand-muted'),
+                                border: T('--brand-border')
+                            }
+                        },
+                        fontFamily: {
+                            sans: F('--font-sans'),
+                            serif: F('--font-serif')
+                        }
+                    }
+                }
+            };
+        })();
+    </script>
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- TOP HEADER / HERO BAR -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60">
+        <div class="max-w-5xl w-full mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+
+                <div class="flex items-center space-x-3">
+                    <!-- Brand mark: latte-art cup (identity reference) -->
+                    <div class="relative w-12 h-12 rounded-full bg-gradient-to-br from-brand-accent to-brand-dark p-0.5 flex-shrink-0">
+                        <div class="w-full h-full bg-brand-dark rounded-full flex items-center justify-center overflow-hidden">
+                            <!-- SVG brand paint uses var() via inline style, because presentation
+                                 attributes (fill=/stroke=) cannot take var(). The two literal
+                                 hexes below are latte-art gradient endpoints, not brand identity
+                                 tokens — same convention documented in assets/app.css. -->
+                            <svg viewBox="0 0 200 200" class="w-full h-full text-brand-accent" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="100" cy="100" r="90" style="fill: #1c130e"/>
+                                <circle cx="100" cy="100" r="75" stroke-width="8" style="stroke: var(--brand-accent); fill: #3d2417"/>
+                                <path d="M100 145 C100 145, 70 120, 70 100 C70 85, 85 80, 100 95 C115 80, 130 85, 130 100 C130 120, 100 145, 100 145 Z" opacity="0.9" style="fill: var(--brand-cream)"/>
+                                <path d="M100 130 C100 130, 80 110, 80 95 C80 85, 90 80, 100 90 C110 80, 120 85, 120 95 C120 110, 100 130, 100 130 Z" style="fill: var(--brand-cream)"/>
+                                <circle cx="100" cy="70" r="5" style="fill: var(--brand-cream)"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif">SLEEPLESS CAFE</h1>
+                </div>
+
+                <span class="hidden sm:inline text-brand-muted text-xs">Cozy Chill-out Tambayan</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN: HOW TO ORDER -->
+    <main class="max-w-5xl w-full mx-auto px-4 flex-1">
+
+        <!-- Intro -->
+        <section class="py-8 sm:py-12">
+            <p class="text-brand-cream font-serif text-2xl sm:text-4xl font-bold tracking-tight">
+                Order here. Pay at the counter.
+            </p>
+            <p class="text-brand-muted text-sm sm:text-base mt-3 max-w-prose">
+                Build your order on this screen, check out with your name, and you get a
+                <strong class="text-brand-accentLight">5-digit claim code</strong>.
+                Present that code to the cashier within 60 minutes — an order that is
+                never claimed simply closes.
+            </p>
+        </section>
+
+        <!-- 3-step explainer -->
+        <section class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
+            <div class="glass-card rounded-xl p-5">
+                <div class="flex items-center space-x-3">
+                    <span class="text-brand-accent text-2xl font-bold font-serif">1</span>
+                    <i class="fa-solid fa-mug-hot text-brand-accent text-2xl"></i>
+                </div>
+                <h2 class="text-brand-cream font-semibold mt-2">Browse &amp; add</h2>
+                <p class="text-brand-muted text-sm mt-2">
+                    Pick a category, choose the size, set the quantity with
+                    <span class="font-mono text-brand-accentLight">+</span> /
+                    <span class="font-mono text-brand-accentLight">−</span>, then Add to Cart.
+                </p>
+            </div>
+
+            <div class="glass-card rounded-xl p-5">
+                <div class="flex items-center space-x-3">
+                    <span class="text-brand-accent text-2xl font-bold font-serif">2</span>
+                    <i class="fa-solid fa-cash-register text-brand-accent text-2xl"></i>
+                </div>
+                <h2 class="text-brand-cream font-semibold mt-2">Checkout with your name</h2>
+                <p class="text-brand-muted text-sm mt-2">
+                    Review the itemized total, then enter your full name. Prices are in
+                    Philippine peso (₱).
+                </p>
+            </div>
+
+            <div class="glass-card rounded-xl p-5">
+                <div class="flex items-center space-x-3">
+                    <span class="text-brand-accent text-2xl font-bold font-serif">3</span>
+                    <i class="fa-solid fa-hashtag text-brand-accent text-2xl"></i>
+                </div>
+                <h2 class="text-brand-cream font-semibold mt-2">Present your code</h2>
+                <p class="text-brand-muted text-sm mt-2">
+                    Show the cashier your 5 digits and your name within
+                    <strong class="text-brand-accentLight">60 minutes</strong>. They confirm
+                    the payment and the kitchen starts.
+                </p>
+            </div>
+        </section>
+
+        <!-- Primary action -->
+        <section class="mt-10 flex items-center">
+            <!-- No text-brand-cream here: cream on the gold gradient is 2.4:1 and
+                 fails WCAG AA. btn-primary supplies dark text at 7:1. -->
+            <a href="menu.html"
+               class="btn-primary whitespace-nowrap rounded-xl border border-brand-accent/40 transition-all">
+                <i class="fa-solid fa-utensils text-brand-accent mr-2"></i>
+                Open the menu
+            </a>
+        </section>
+
+        <!-- Build status strip: keeps the root honest during development -->
+        <section class="mt-10 py-4 px-4 rounded-lg border border-brand-border/60 bg-brand-card/40">
+            <p class="text-brand-muted text-xs uppercase tracking-wider mb-2">Build status</p>
+            <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
+                <span class="text-brand-muted text-xs block">1 · Backend database — pending</span>
+                <span class="text-brand-muted text-xs block">2 · Customer menu — pending</span>
+                <span class="text-brand-muted text-xs block">3 · Cashier terminal — pending</span>
+                <span class="text-brand-muted text-xs block">4 · Kitchen display — pending</span>
+                <span class="text-brand-muted text-xs block">5 · Owner dashboard — pending</span>
+            </div>
+            <p class="text-brand-muted text-xs mt-2">
+                If <em>Open the menu</em> is not reachable yet, that phase is still being built.
+            </p>
+        </section>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-4 px-4">
+        <div class="flex flex-col sm:flex-row sm:justify-between gap-2">
+            <p class="text-brand-muted text-xs">
+                <i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i>
+                Sleepless Cafe · Prices in Philippine peso (₱)
+            </p>
+            <p class="text-brand-muted text-xs">
+                Confidential internal staff interfaces are not linked from this page.
+            </p>
+        </div>
+    </footer>
+
+</body>
+</html>

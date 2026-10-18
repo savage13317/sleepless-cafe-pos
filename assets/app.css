@@ -1,0 +1,132 @@
+/* ===========================================================================
+   assets/app.css — component layer. Consumes assets/tokens.css.
+   Load tokens.css BEFORE this file. No brand hex is hardcoded here: colors
+   come from var(--brand-*) via color-mix, so tokens.css stays the single
+   source. Literal hex appears ONLY for non-brand gradient endpoints and
+   semantic status colors (red/amber), which are not brand identity.
+   =========================================================================== */
+
+/* --- Phase 0+: page canvas ------------------------------------------------ */
+body {
+  background-color: var(--brand-dark);
+  color: var(--brand-cream);
+  font-family: var(--font-sans);
+  /* #351f14 is a gradient endpoint, not a brand token */
+  background-image: radial-gradient(circle at 50% 0%, #351f14 0%, var(--brand-dark) 70%);
+  background-attachment: fixed;
+}
+
+/* --- Phase 0+: glassmorphism --------------------------------------------- */
+/* Fallback rule first, then the color-mix upgrade. Engines that do not know
+   color-mix (older café tablets: Safari < 16.4, Chrome < 111) keep the rgba
+   value instead of losing the panel and rendering text on a transparent card. */
+.glass-panel {
+  background: rgba(34, 22, 16, 0.75);
+  background: color-mix(in srgb, var(--brand-card) 75%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(214, 141, 55, 0.15);
+  border: 1px solid color-mix(in srgb, var(--brand-accent) 15%, transparent);
+}
+
+.glass-card {
+  background: rgba(45, 29, 21, 0.6);
+  background: color-mix(in srgb, var(--brand-card-hover) 60%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(214, 141, 55, 0.12);
+  border: 1px solid color-mix(in srgb, var(--brand-accent) 12%, transparent);
+}
+
+.glass-card:hover {
+  border-color: rgba(214, 141, 55, 0.35);
+  border-color: color-mix(in srgb, var(--brand-accent) 35%, transparent);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5),
+              0 0 15px rgba(214, 141, 55, 0.1);
+}
+
+/* --- Phase 0+: custom scrollbar ------------------------------------------ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--brand-dark); }
+::-webkit-scrollbar-thumb { background: var(--brand-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--brand-accent); }
+
+/* --- Phase 2+: active nav/tab highlight (menu.html tab bar) -------------- */
+.nav-btn.active {
+  /* #b06f23 is a gradient endpoint, not a brand token */
+  background: linear-gradient(135deg, var(--brand-accent) 0%, #b06f23 100%);
+  color: var(--brand-dark);
+  font-weight: 700;
+  box-shadow: 0 4px 15px rgba(212, 141, 55, 0.3);
+  box-shadow: 0 4px 15px color-mix(in srgb, var(--brand-accent) 30%, transparent);
+}
+
+/* --- Phase 2+: primary tap button (Add to Cart, checkout, Confirm, Serve) */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;                 /* tap target */
+  padding: 14px 22px;
+  border-radius: 12px;
+  /* #b06f23 is a gradient endpoint, not a brand token */
+  background: linear-gradient(135deg, var(--brand-accent) 0%, #b06f23 100%);
+  color: var(--brand-dark);
+  font-weight: 700;
+  box-shadow: 0 4px 15px rgba(212, 141, 55, 0.3);
+  box-shadow: 0 4px 15px color-mix(in srgb, var(--brand-accent) 30%, transparent);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.btn-primary:hover {
+  box-shadow: 0 6px 18px rgba(212, 141, 55, 0.4);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--brand-accent) 40%, transparent);
+}
+
+/* --- Phase 3: cashier countdown status pair ------------------------------ */
+.status-live {
+  color: var(--brand-accent-light);
+  /* normal countdown — gold, calm */
+}
+.status-lastcall {
+  /* < 2 min remaining: red/amber warning. These are SEMANTIC status colors,
+     not brand identity, so they are defined here rather than in tokens.css. */
+  color: #ffd7d0;
+  background: rgba(192, 57, 43, 0.22);
+  background: color-mix(in srgb, #c0392b 22%, transparent);
+  border: 1px solid rgba(192, 57, 43, 0.45);
+  border: 1px solid color-mix(in srgb, #c0392b 45%, transparent);
+  font-weight: 700;
+}
+
+/* --- Phase 4: KDS high-contrast scope (kitchen.html opts in) ------------- */
+/* Readable at ~2 m on a wall-mounted tablet: larger base type, heavier
+   weight, higher-contrast text, tap targets >= 48px. */
+.kds {
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #ffffff;                    /* max contrast, not brand cream */
+}
+.kds .glass-card {
+  background: rgba(20, 12, 8, 0.88);
+  background: color-mix(in srgb, var(--brand-dark) 88%, transparent);
+  border: 2px solid rgba(212, 141, 55, 0.55);
+  border: 2px solid color-mix(in srgb, var(--brand-accent) 55%, transparent);
+}
+.kds .btn-primary {
+  min-height: 56px;
+  padding: 18px 28px;
+  font-size: 1.1rem;
+}
+
+/* --- Phase 0+: print rules (SOP-style sheets) ---------------------------- */
+@media print {
+  .no-print { display: none !important; }
+  body { background: white !important; color: black !important; }
+  .glass-panel, .glass-card {
+    background: white !important;
+    color: black !important;
+    border: 1px solid #ccc !important;
+  }
+  .print-full { width: 100% !important; max-width: none !important; }
+}

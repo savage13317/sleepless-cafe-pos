@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# Sleepless Cafe POS — Phase 0 ignore rules
+# ---------------------------------------------------------------------------
+
+# Generated config: written at Vercel build time by tools/inject-config.mjs.
+# It embeds the live Supabase URL/key, so it is a build artifact, never source.
+assets/config.generated.js
+
+# Secrets / local overrides: never commit env files or the ?sbkey localStorage
+# dump. Publishable key may be committed; service-role key must never appear.
+.env
+.env.*
+*.local
+
+# Vercel local build state (project link id, deploy cache).
+**/.vercel/**
+
+# Dependency / tooling noise (Phase B compiled-CSS build, any local tooling).
+node_modules/
+
+# Editor workspace settings (per-machine, not project truth).
+.vscode/
+
+# OS / filesystem junk.
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files from local runs or QA sweeps.
+*.log

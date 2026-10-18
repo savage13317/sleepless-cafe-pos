@@ -1,0 +1,25 @@
+/* ===========================================================================
+   assets/tokens.css — SINGLE SOURCE OF TRUTH for brand color + type.
+   ---------------------------------------------------------------------------
+   Every brand hex value in this project is defined HERE, exactly once. Later
+   phases (menu / cashier / kitchen / owner) MUST consume these custom
+   properties via var(...) and MUST NOT hardcode hex values. If a color needs
+   to change, change it here — never in a page or in app.css.
+   Palette extracted from Sleepless.html (reference only).
+   =========================================================================== */
+
+:root {
+  /* Brand palette */
+  --brand-dark:         #140c08;   /* deep roast background         */
+  --brand-card:         #221610;   /* warm espresso card background */
+  --brand-card-hover:   #2d1d15;   /* card hover fill               */
+  --brand-accent:       #d48d37;   /* latte gold                    */
+  --brand-accent-light: #eec278;   /* light latte gold              */
+  --brand-cream:        #f8f1e5;   /* soft cream text               */
+  --brand-muted:        #a38f83;   /* muted coffee text             */
+  --brand-border:       #3d271d;   /* subtle border                 */
+
+  /* Type */
+  --font-sans:  'Inter', sans-serif;
+  --font-serif: 'Playfair Display', serif;
+}
