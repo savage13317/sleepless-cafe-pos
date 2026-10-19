@@ -2,14 +2,10 @@
 -- 03_rls.sql :: PHASE 1c - ROLE LIMITATIONS (Supabase / PostgreSQL 15)
 -- APPLY AFTER 02_functions.sql, BEFORE 04_realtime.sql
 --
--- IDEMPOTENCY: CREATE POLICY has no "IF NOT EXISTS" form, so this file is NOT
--- re-runnable as-is. To re-apply, uncomment the DROP block below once, then run
--- this file. (DROP ... IS * removes every policy for the table in one shot.)
---
--- DROP POLICY 'x' IS * FOR menu_items;
--- DROP POLICY 'x' IS * FOR categories;
--- DROP POLICY 'x' IS * FOR orders;
--- DROP POLICY 'x' IS * FOR order_items;
+-- IDEMPOTENCY: this file IS re-runnable. Every CREATE POLICY is preceded by a
+-- matching DROP POLICY IF EXISTS <name> ON <table>; and RLS is turned on with
+-- ALTER TABLE ... ENABLE ROW LEVEL SECURITY;, which is itself idempotent. So
+-- the whole file can be pasted into the SQL Editor again and nothing changes.
 --
 -- ROLES IN PLAY
 --   anon          = api.js holding only the PUBLISHABLE key, no session. The
@@ -20,16 +16,15 @@
 --                   (cashier / kitchen / owner). role = 'authenticated'.
 --                   Being signed in proves nothing about WHO they are.
 --
--- WHY THE FUNCTIONS IN 02 WORK WITHOUT A TABLE POLICY
---   PostgreSQL evaluates RLS only for statements the client asks to run
---   directly (a raw GET/POST/PATCH/DELETE from the REST layer). Statements
---   inside a SQL function body are executed by the server on the function's
---   own behalf and are NOT filtered through the caller's table policies:
---   create_order can INSERT, confirm_payment / set_preparing / mark_served can
---   UPDATE, and purge_expired_orders / void_order can DELETE, even though anon
---   has no INSERT/UPDATE/DELETE policy that a page could exploit. That is the
---   whole security shape here: the table is the boundary, the functions are the
---   only doors, and no page ever writes `status`.
+-- WHY EVERY TABLE ACCESS IN 02 NEEDS A POLICY
+--   RLS is enforced for the effective user of EVERY statement, including the
+--   statements inside a plpgsql function body. PostgREST runs SET ROLE first,
+--   so a function called by a signed-in member runs as `authenticated` and one
+--   called by a customer runs as `anon`. Each table a function touches must
+--   therefore be covered by a policy for the calling role, or the function is
+--   blocked. The fence is the policy EXPRESSION (USING / WITH CHECK), which
+--   encodes the state machine: a signed-in staff member still cannot write an
+--   illegal row even though they hold a write policy.
 --
 --   CONFIG.ownerEmails is an ALLOWLIST CHECK ONLY (a UI gate). RLS is the
 --   security boundary. Owner menu-write functions (Phase 5) will require an
@@ -41,61 +36,118 @@
 
 
 -- ----------------------------------------------------------------------------
--- PUBLIC MENU READ (anon + authenticated). Menu writes are NOT granted to
--- anyone at the table level: a signed-in staff member must not be able to
--- rename or reprice the catalogue. Phase 5 owner functions do the writes.
+-- ENABLE ROW LEVEL SECURITY FIRST. Without this every policy below is inert.
+-- 01_schema.sql never enables RLS, so this file owns it. ALTER TABLE is
+-- idempotent, so re-running is harmless.
 -- ----------------------------------------------------------------------------
-CREATE POLICY 'menu_read_public' FOR menu_items
-  READING ( ( role = 'anon' ) OR ( role = 'authenticated' ) );
+ALTER TABLE menu_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY 'categories_read_public' FOR categories
-  READING ( ( role = 'anon' ) OR ( role = 'authenticated' ) );
 
--- Deliberately absent: no INSERT / UPDATE / DELETE policy for menu_items or
--- categories. Default deny covers anon AND authenticated alike.
+-- ----------------------------------------------------------------------------
+-- PUBLIC MENU READ (anon + authenticated). Menu writes are NOT granted to
+-- anon at the table level: a customer must not be able to rename or reprice
+-- the catalogue. Phase 5 owner functions do the writes as authenticated.
+-- ----------------------------------------------------------------------------
+DROP POLICY IF EXISTS menu_read_public ON menu_items;
+CREATE POLICY menu_read_public ON menu_items FOR SELECT TO anon, authenticated USING ( true );
+
+DROP POLICY IF EXISTS categories_read_public ON categories;
+CREATE POLICY categories_read_public ON categories FOR SELECT TO anon, authenticated USING ( true );
 
 
 -- ----------------------------------------------------------------------------
 -- ORDERS / ORDER_ITEMS - CUSTOMER (anon) WRITE DOOR
--- anon INSERT is allowed on both so create_order's INSERTs run for a customer
--- who has no session. anon READ is denied (see the read policies below), and
--- anon UPDATE / DELETE are denied outright: every status change happens inside
--- a function in 02, never by a page writing `status`.
+-- Fenced so anon can only ever create a live unpaid claim, never a pre-paid
+-- row. anon INSERT is allowed on both so create_order's INSERTs run for a
+-- customer who has no session. anon READ stays denied (no anon SELECT exists
+-- on orders/order_items), and anon UPDATE / DELETE are denied outright: every
+-- status change happens inside a function in 02, never by a page writing `status`.
+--
+-- The row SHAPE is fenced by the schema CHECKs in 01_schema.sql, not here. An
+-- anon WITH CHECK cannot reference orders to prove the parent claim is its own,
+-- because anon has no SELECT rights on orders - a policy expression that reads
+-- a table the caller cannot read raises permission denied. So the parent-link
+-- fence lives in create_order, not in RLS.
 -- ----------------------------------------------------------------------------
-CREATE POLICY 'orders_customer_insert' FOR orders
-  INSERTING ( role = 'anon' );
+DROP POLICY IF EXISTS orders_customer_insert ON orders;
+CREATE POLICY orders_customer_insert ON orders FOR INSERT TO anon WITH CHECK ( status = 'pending_payment' );
 
-CREATE POLICY 'order_items_customer_insert' FOR order_items
-  INSERTING ( role = 'anon' );
+DROP POLICY IF EXISTS order_items_customer_insert ON order_items;
+CREATE POLICY order_items_customer_insert ON order_items FOR INSERT TO anon WITH CHECK ( true );
 
 
 -- ----------------------------------------------------------------------------
 -- ORDERS / ORDER_ITEMS - STAFF / OWNER READ (authenticated only)
 -- The cashier and kitchen boards are authenticated sessions; anon is excluded
 -- here, which is what keeps other customers' orders invisible to a customer.
+-- DELETE / UPDATE policies also need SELECT rights, so these reads are what
+-- let the staff write policies below actually run.
 -- ----------------------------------------------------------------------------
-CREATE POLICY 'orders_staff_read' FOR orders
-  READING ( role = 'authenticated' );
+DROP POLICY IF EXISTS orders_staff_read ON orders;
+CREATE POLICY orders_staff_read ON orders FOR SELECT TO authenticated USING ( true );
 
-CREATE POLICY 'order_items_staff_read' FOR order_items
-  READING ( role = 'authenticated' );
+DROP POLICY IF EXISTS order_items_staff_read ON order_items;
+CREATE POLICY order_items_staff_read ON order_items FOR SELECT TO authenticated USING ( true );
 
 
 -- ----------------------------------------------------------------------------
--- NO UPDATE / DELETE POLICY EXISTS ANYWHERE IN THIS FILE.
--- That is the rule, not an oversight: orders transitions are exclusively
--- confirm_payment (pending_payment -> paid), set_preparing (paid -> preparing),
--- mark_served (paid|preparing -> served); removals are exclusively
--- purge_expired_orders (TTL) and void_order (fenced to pending_payment).
--- A signed-in staff member therefore has zero raw UPDATE/DELETE power: the
--- boards call functions, they never patch rows.
---
+-- STAFF WRITE POLICIES (authenticated). These exist because the state-machine
+-- functions in 02 run as `authenticated` and RLS applies inside function
+-- bodies, so each function's UPDATE / DELETE must be covered. The EXPRESSION is
+-- the fence that keeps the state machine: a signed-in member holds a write
+-- policy but still cannot produce an illegal row.
+-- ----------------------------------------------------------------------------
+DROP POLICY IF EXISTS orders_staff_update ON orders;
+CREATE POLICY orders_staff_update ON orders FOR UPDATE TO authenticated
+  USING ( true )
+  WITH CHECK ( ( status = 'paid' OR status = 'preparing' OR status = 'served' ) AND paid_at IS NOT NULL );
+
+-- The WITH CHECK means the only rows an authenticated UPDATE may PRODUCE are
+-- pipeline rows with paid_at set: a signed-in member can never flip a row back
+-- to pending_payment nor clear paid_at, so the monotonic lifecycle holds at the
+-- policy level, not just by convention.
+
+DROP POLICY IF EXISTS orders_staff_delete ON orders;
+CREATE POLICY orders_staff_delete ON orders FOR DELETE TO authenticated USING ( status = 'pending_payment' );
+
+-- This is the core invariant from 01_schema.sql expressed as a policy: only
+-- live unpaid claims are ever deletable, so purge_expired_orders and void_order
+-- work while a paid sale is physically undeletable even by a signed-in staff
+-- member.
+
+DROP POLICY IF EXISTS categories_staff_write ON categories;
+CREATE POLICY categories_staff_write ON categories FOR ALL TO authenticated
+  USING ( true )
+  WITH CHECK ( LENGTH(TRIM(name)) BETWEEN 1 AND 80 );
+
+-- FOR ALL covers SELECT / INSERT / UPDATE / DELETE for authenticated in one
+-- policy (an ALL policy's USING also serves as its WITH CHECK when only USING
+-- is given, so WITH CHECK is stated explicitly here). This is what
+-- create_category / reorder_categories / delete_category need.
+
+DROP POLICY IF EXISTS menu_items_staff_write ON menu_items;
+CREATE POLICY menu_items_staff_write ON menu_items FOR ALL TO authenticated
+  USING ( true )
+  WITH CHECK ( LENGTH(TRIM(name)) BETWEEN 1 AND 120 );
+
+-- This is what create_menu_item / update_menu_item / delete_category need. anon
+-- is excluded from every write policy on menu_items and categories, so a
+-- customer can never edit the catalogue.
+
+
+-- ----------------------------------------------------------------------------
 -- Summary of what is granted (nothing else is):
---   menu_items            READ  anon, authenticated
---   categories            READ  anon, authenticated
---   orders                INSERT anon        READ authenticated
+--   menu_items            READ  anon, authenticated   WRITE authenticated (ALL)
+--   categories            READ  anon, authenticated   WRITE authenticated (ALL)
+--   orders                INSERT anon        READ authenticated   UPDATE authenticated   DELETE authenticated
 --   order_items           INSERT anon        READ authenticated
---   all four tables       UPDATE none        DELETE none
+--   anon                  NO write policy on menu_items / categories
+--   anon                  NO read policy on orders / order_items
+--   NO role               INSERT policy on order_items besides anon
+--   NO role               INSERT policy on orders besides anon
 -- ============================================================================
 -- END 03_rls.sql
 -- ============================================================================

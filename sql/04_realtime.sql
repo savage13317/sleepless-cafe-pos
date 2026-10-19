@@ -2,38 +2,78 @@
 -- 04_realtime.sql :: PHASE 1d - REALTIME WIRE CONTRACT (Supabase / PostgreSQL 15)
 -- APPLY AFTER 03_rls.sql
 --
--- Supabase Realtime is NOT a SQL table and not a SQL setting: it is a
--- Dashboard preference - "Settings -> Realtime -> event whitelist" per table.
--- There is no UPDATE config / ALTER TABLE statement that turns it on, so the
--- executable part of this file is only a sanity check. Everything else is the
--- contract realtime.js (Phase 4) must match.
+-- Supabase Realtime is NOT a SQL table and not a SQL setting, and there is
+-- NO per-table "event whitelist" anywhere in the Dashboard (verified against
+-- the live project Settings and the current official docs). Per-table event
+-- selection is CLIENT-SIDE: the `eq:orders.INSERT`-style filter strings and
+-- the .on(event) handlers realtime.js (Phase 4) sends. What SQL does control
+-- is DELIVERY: Postgres Changes events are gated by the table's RLS (03_rls.sql).
+-- Everything in this file is the contract realtime.js must match, plus two
+-- sanity SELECTs. No other executable SQL belongs here.
 --
 -- ----------------------------------------------------------------------------
--- WHITELIST FOR `orders`  ->  INSERT + DELETE + UPDATE
+-- EVENT SELECTION FOR `orders`  ->  INSERT + DELETE + UPDATE (CLIENT-SIDE)
+--   Which events a socket listens for is chosen by realtime.js via its
+--   `filter`/`eq:` strings and .on(event) handlers - it is NOT a project
+--   setting and there is nothing to toggle per table.
 --   INSERT  both boards need it: a new claim appears on the cashier board.
 --   DELETE  the CASHIER needs it. Expiry and void are physical DELETEs (01
 --           core invariant), so a row vanishes the instant it expires. Without
---           DELETE whitelisted the cashier socket keeps a ghost row on screen
+--           a DELETE handler the cashier socket keeps a ghost row on screen
 --           after purge_expired_orders() removed it.
 --   UPDATE  the KITCHEN needs it: paid -> preparing -> served is an UPDATE,
 --           and a paid order is never deleted, so kitchen does not need DELETE.
 --
--- DO NOT WHITELIST `order_items`.
---   sql/01 declares order_id REFERENCES orders ON DELETE CASCADE, so every
---   orders DELETE cascades into N order_items DELETEs. Whitelisting that table
---   floods the cashier socket with child events it never asked for. Line items
---   arrive inside the payload of the orders event instead.
+-- WHO ACTUALLY RECEIVES THE EVENTS - the RLS gate (03_rls.sql):
+--   Official docs (Realtime Authorization): "When using Postgres Changes on
+--   tables with RLS, database records are sent only to clients who are allowed
+--   to read them based on your RLS policies."
+--   `authenticated` holds orders_staff_read (SELECT) on orders  -> the cashier
+--   and kitchen sockets, which authorize with a session token, receive events.
+--   `anon` holds NO SELECT policy on orders -> a customer's socket receives
+--   nothing, even though it holds the publishable key. This is why the
+--   security boundary is RLS, not the channel being "public".
 --
--- DASHBOARD ACTION (manual, once, on the Supabase project):
---   Settings -> Realtime -> event whitelist, table = orders, events =
---   INSERT, DELETE, UPDATE. Leave order_items off.
+-- DO NOT SUBSCRIBE to `order_items` (CLIENT-side rule, not a dashboard toggle):
+--   sql/01 declares order_id REFERENCES orders ON DELETE CASCADE, so every
+--   orders DELETE cascades into N order_items DELETEs. Subscribing to that
+--   table floods the cashier socket with child events it never asked for. Line
+--   items arrive inside the payload of the orders event instead.
+--
+-- LIVE PROJECT STATE (verified on the dashboard, project "POS", branch main):
+--   Realtime Settings (/dashboard/project/<ref>/realtime/settings) contains
+--   ONLY: Enable Realtime service (ON), Allow public access to channels (ON),
+--   Database connection pool size (2), Postgres Changes connection pool size
+--   (2), Max concurrent clients (200), and Pro-only disabled fields (Max
+--   events/s, Max presence events/s, Max payload size). There is no per-table
+--   event whitelist anywhere in Settings.
+--   => Phase 1d requires NO dashboard click and NO SQL. The two toggles this
+--   design needs (Enable Realtime service, Allow public access to channels)
+--   are BOTH already ON by default; the executable part of this file is only
+--   the sanity SELECTs below.
+--
+-- The Policies page (/realtime/policies, "Control access to your realtime
+-- channels") stays EMPTY on this design: we use public channels + RLS
+-- filtering, and "Allow public access to channels" = ON means no policy check
+-- runs - anyone holding the project's anon/publishable key can subscribe to
+-- and broadcast on any PUBLIC channel; the RLS gate above is what protects
+-- the orders data.
+--   IF we ever switch to private channels (clients sending config { private:
+--   true }, Broadcast/Presence only): access policies live on the
+--   realtime.messages table - SELECT policy = who may receive, INSERT policy =
+--   send, using the realtime.topic() helper to match channels. WARNING: `ALTER
+--   TABLE realtime.messages ENABLE ROW LEVEL SECURITY` fails with 42501
+--   "must be owner of table messages" (RLS is already enabled there and the
+--   schema is locked); such a line aborts the transaction and skips every
+--   later statement, so never add one.
 -- ----------------------------------------------------------------------------
 
 
 -- The only thing verifiable from SQL: the tables that emit events exist and
--- are the ones realtime subscribes to. (No preference is readable here.)
-SELECT 'orders' AS realtime_table, 'INSERT, DELETE, UPDATE' AS whitelisted_events;
-SELECT 'order_items' AS realtime_table, 'NOT whitelisted (CASCADE flood)' AS whitelisted_events;
+-- are the ones realtime subscribes to. (No preference is readable here, and
+-- event selection itself lives client-side in realtime.js.)
+SELECT 'orders' AS realtime_table, 'INSERT, DELETE, UPDATE (client-side)' AS subscribed_events;
+SELECT 'order_items' AS realtime_table, 'NOT subscribed (CASCADE flood)' AS subscribed_events;
 
 
 -- ----------------------------------------------------------------------------
