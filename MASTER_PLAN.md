@@ -174,7 +174,7 @@ Every function below is the single entry point for a state transition; pages cal
 | `confirm_payment(code) → order` | cashier | Atomic guard: `UPDATE ... WHERE status='pending_payment' AND expires_at >= NOW()`. 0 rows updated → "this order's time is up, please place a new one" |
 | `kitchen_queue() → rows` | kitchen | `status='paid'` ordered by `paid_at` asc |
 | `mark_served(id) → {fulfillment_time_seconds}` | kitchen | `paid → served`, `served_at = NOW()`, computes delta |
-| `void_order(id)` | cashier | Cashier-initiated delete of an unpaid order — routes through the same DELETE path as the TTL |
+| `void_order(id)` | owner (Tab 1 live-claims panel — see deviation 7) | Owner-initiated delete of an unpaid order — routes through the same DELETE path as the TTL. Fenced to `pending_payment`; no cashier button exists |
 | `sales_summary(from, to, grain) → metrics` | owner tab 1 | Revenue, completed count, AOV |
 | `turnover_stats(from, to) → metrics` | owner tab 2 | Avg fulfillment seconds, p95, peak-hour histogram |
 | `create_category / reorder_categories / delete_category` | owner tab 4 | Menu grouping control |
@@ -254,6 +254,8 @@ Shared error UX: network down, DB timeout, invalid code, expired order, duplicat
 4. **Supabase project:** new, from scratch. `sql/01–05` applied in order, and **`sql/05_seed.sql` is required** so the dev build has a menu to render before the owner builds one.
 5. **No links to existing HTML.** `Sleepless.html` is palette/type reference only. The four interfaces are independent sites; `staff.html` is not created and the dangling link at `Sleepless.html:237` is left as-is (out of scope, do not edit that file).
 6. **Unpaid = deleted, paid = permanent.** An order unpaid past its 60-minute TTL is `DELETE`d from `orders` (children cascade). Once `confirm_payment()` succeeds the order is permanent and is never deleted or aged out. `status` enum narrows to `pending_payment · paid · preparing · served`; `expired` and `cancelled` do not exist as states. `purge_expired_orders()` is the only DELETE in the codebase.
+
+7. **`void_order()` is owner-only, and now wired (resolved 2026-10-19: option A).** The function table above attributes `void_order` to the cashier, but `cashier.html` deliberately ships no void control (see the comment at `cashier.html:88`): a cashier tapping void would be a one-keystroke loss of a live claim, so cashier-side removal stays the TTL's job and voiding is an owner-dashboard decision. **Resolution:** `owner.html` Tab 1 (Sales) now renders the live unpaid claims from `list_active_pending()` and offers a per-row **Void claim** button with a two-step confirm (first tap arms the row, the button re-renders as "Confirm void", second tap executes; an arm older than 12 s is dropped). `void_order` remains fenced to `pending_payment` server-side, so a paid order cannot be reached from the dashboard. `api.js` keeps the `voidOrder` export and it is now actually called.
 
 ---
 
