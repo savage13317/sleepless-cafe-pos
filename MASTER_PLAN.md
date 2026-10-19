@@ -131,6 +131,8 @@ Ordering System/
 | 7 | Phase A deploy + dogfood | `devops-lead` | GH Pages build, mobile test, 3-order walkthrough | Full loop passes on the public URL: place → pay → serve → analytics |
 | 8 | Phase B Vercel go-live | `devops-lead` | `tools/inject-config.mjs`, `vercel.json`, domain, Tailwind build | Phase A gate green + production checklist §7 all ticked |
 
+**Progress (2026-10-19):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). Next up: **Phase 5 (owner dashboard)**.
+
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
 
 ---
@@ -193,6 +195,8 @@ Every function below is the single entry point for a state transition; pages cal
 - Because paid rows are permanent, `orders` grows forever. Index `created_at`, `paid_at`, `served_at`, and `status` in `sql/01_schema.sql` so the owner's date-range queries stay cheap at 100k+ orders.
 
 **Realtime transport (`assets/realtime.js`):** `supabase-js@2` via jsDelivr ESM in `<script type="module">`; WS subscribe on `orders`. If WS fails (network disconnect on a café tablet), fall back to 3s polling on `kitchen_queue()` — the UI must look identical either way.
+
+Verified live (Phase 4, 2026-10-19): pinned to the only published release **2.118.0** (no 4.x exists on the CDN); `orders` added to the `supabase_realtime` publication (`alter publication supabase_realtime add table orders;`); the board dot reads **WS live** and a paid card appears with no reload.
 
 ---
 

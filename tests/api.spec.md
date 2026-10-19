@@ -70,7 +70,7 @@ table 'public.<fn>'"` even though PostgREST's schema cache reports the RPCs as l
 - [ ] P1 - `01_schema.sql` carries `ON DELETE CASCADE` on the `order_items -> orders` FK
 - [ ] P2 - cart -> checkout -> real order in DB with a real 5-digit code (leading zeros preserved, string-typed)
 - [ ] P3 - code lookup + live unpaid table + countdown + Confirm Payment flips status to `paid`
-- [ ] P4 - paid order appears without refresh; Mark as Served writes `served_at` + `fulfillment_time_seconds`
+- [x] P4 - paid order appears without refresh; Mark as Served writes `served_at` + `fulfillment_time_seconds` — **VERIFIED 2026-10-19** (dot WS live, card appeared with no reload; authenticated DB read: `63242` served_at 13:03:30 / 1641s, `02342` served_at 13:05:03 / 894s)
 - [ ] P5 - Auth gate blocks anonymous (all 7 owner RPCs return `OWNER_SESSION_REQUIRED` anon); menu builder creates a real renderable item
 - [ ] TTL proof - unpaid order past 60 min: `SELECT` on its code in the Dashboard -> **no row**; `SELECT` `order_items` for that `order_id` -> **0** (cascade)
 - [ ] Permanence proof - a `paid` order survives 10 consecutive `purge_expired_orders()` calls and still appears in `sales_summary` + `turnover_stats`

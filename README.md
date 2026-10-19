@@ -50,6 +50,8 @@ single `DELETE` path in the codebase and can never match a paid row.
 | 7 | Phase A deploy + dogfood | `devops-lead` | GH Pages build, mobile test, 3-order walkthrough | Full loop passes on the public URL: place → pay → serve → analytics |
 | 8 | Phase B Vercel go-live | `devops-lead` | `tools/inject-config.mjs`, `vercel.json`, domain, Tailwind build | Phase A gate green + production checklist §7 all ticked |
 
+**Progress (2026-10-19):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79`). Next up: **Phase 5 (owner dashboard)**.
+
 Phases 2–5 are strictly ordered — each page depends on the previous page's DB side
 effects being real.
 

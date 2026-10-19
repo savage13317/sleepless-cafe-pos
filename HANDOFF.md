@@ -1,7 +1,7 @@
 # HANDOFF.md — Sleepless Cafe POS · continuation brief
 
 **Written:** 2026-10-19 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
-**Where we are:** Phase 1 (SQL pipeline) done and applied live · Phases 2 and 3 passed their gates · **Phase 4 (kitchen realtime) is IN PROGRESS and its gate is NOT met.**
+**Where we are:** Phases 1–4 done and applied live · **Phase 4 (kitchen realtime) gate PASSED** (commit `19fef79`) · **Phase 5 (owner dashboard) is next and not started.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -61,6 +61,11 @@ the Policies page (`/realtime/policies`) applies only to **private** channels, a
 `ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY` fails `42501 must be owner of table
 messages` — never add that line, it aborts the whole pasted group.
 
+**RESOLVED (2026-10-19):** `alter publication supabase_realtime add table orders;` applied live in the
+SQL Editor (root) → "Success. No rows returned"; `/database/publications` now shows `supabase_realtime`
+id 16426 = **1 table** (was 0). `sql/04_realtime.sql` header corrected to the truth (SQL controls
+membership + delivery; the publication toggle IS required).
+
 ### 1.3 `@supabase/supabase-js@4` does not exist — the current realtime.js cannot connect
 Verified against the npm registry and the CDN:
 
@@ -95,6 +100,12 @@ has **no** `client.socket`, **no** `ensureStarted`, **no** `client.close`:
   use it to make the ws/poll decision honest instead of optimistic.
 - Standalone usage documented in the `.d.ts`: `new RealtimeClient('https://xyz.supabase.co/realtime/v1', { params: { apikey: '…' } })` then `client.connect()`.
 
+**RESOLVED (2026-10-19):** `assets/realtime.js` rewritten to the published **2.118.0** Phoenix-channel API
+(`createClient → client.channel → .on('postgres_changes',…) → .subscribe(cb,timeout)` with
+`postgres_changes_options.wait:true`, `accessToken` callback carrying the staff bearer, teardown via
+`removeChannel` + async `disconnect`). Public surface unchanged (`mode`, `stopWatching()`,
+`startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. The board dot flips to **WS live**.
+
 ### 1.4 Live probe result (supabase-js 2.118.0, staff bearer, `orders` INSERT)
 `createClient(url, key, { accessToken: () => tok })` → `client.channel('probe')` →
 `.on('postgres_changes', { event:'INSERT', schema:'public', table:'orders' }, cb)` →
@@ -102,6 +113,11 @@ has **no** `client.socket`, **no** `ensureStarted`, **no** `client.close`:
 `create_order` succeeded (`{"data":{"code":"71409","total":90,"order_id":"8bb36c94-…"}}`)
 and **`events=[]`** after 4 s. With §1.2 that is explained: the table is not published.
 Re-run this probe after the publication toggle before believing anything else.
+
+**AFTER the toggle (2026-10-19):** the live board now reacts to `INSERT`/`UPDATE` with **no reload** — dot
+reads WS live and a paid card appears on the KDS on its own. A freshly opened standalone probe channel can
+still show `events=[]` in isolation (no live order to catch while it is open); the **no-reload board
+reaction** is the authoritative gate evidence, corroborated by the authenticated DB read in §2.
 
 ### 1.5 Auth (Supabase Auth, free plan)
 - The built-in email sender is exhausted: `POST /auth/v1/signup` →
@@ -157,7 +173,9 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
   "sleepless-cafe", branch `main (Production)`, plan **FREE**.
 - Publishable (client) key — public by design: `sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD`.
   The service-role/secret key has never been shipped to a browser and must never be.
-- DB: seed only — `orders` 0, `order_items` 0, `categories` 4, `menu_items` 12.
+- DB: seed + Phase-4 probe orders — `orders` 3 (`63242` and `02342` both `status=served` with `served_at`
+  + `fulfillment_time_seconds` 1641/894; `13977` still `pending_payment`), `order_items` populated,
+  `categories` 4, `menu_items` 12.
   Category UUIDs `11111111-1111-1111-8333-000000000001..4` (Coffee 1, Non-Coffee 2, Pastries 3,
   Desserts 4). Menu UUIDs `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty.
 - All probe objects removed live (`zz_probe_tbl`, `zz_view1`, `zz_probe_fn`, `zz_p1..zz_p6`,
@@ -175,14 +193,14 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
 | `sql/01_schema.sql` | Unchanged. 4 tables, 6 indexes incl. partial `orders_live_pending_idx`. No RLS enablement anywhere (by design). |
 | `sql/02_functions.sql` | **Fixed, 579 lines, applied live, call-tested.** 16 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. |
 | `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 4× `ENABLE ROW LEVEL SECURITY` first, then 10 policy pairs each preceded by `DROP POLICY IF EXISTS`. |
-| `sql/04_realtime.sql` | Rewritten truthfully **except** the publication claim in §1.2 — **still needs correcting** and the `alter publication` line added. |
+| `sql/04_realtime.sql` | **Corrected + applied live.** Publication claim replaced with the verified membership+delivery contract; executable `alter publication supabase_realtime add table orders;` added; v4 wire block replaced with the 2.118.0 `.on(...)` surface. |
 | `sql/05_seed.sql` | Applied live, idempotent (`ON CONFLICT (id) DO NOTHING`), no DELETE/TRUNCATE. |
 | `assets/api.js` | 12,406 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 16 fns; `getRows`/`getMenu`/`getCategories`; `uploadImage` PUT to public `menu-images` bucket; `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
 | `assets/config.js` | 1,480 B, untouched. Priority `window.SL_CONFIG` → `localStorage.sl_config` → committed placeholder. **Phase 5 note:** `ownerEmails` comes from `sl_config`, so the staff/owner email must be added there for the owner gate. |
-| `assets/realtime.js` | 6,459 B. **Non-functional ws path** (§1.3). Teardown leak from the previous revision is fixed (per-socket `dead` flag + `{close,drop}` handle). Header comments about DELETE not being subscribed, `order_items` never subscribed, RLS-gated delivery, staff bearer required — all still correct, keep them. |
+| `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
 | `menu.html` | 20,233 B. Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
-| `kitchen.html` | 19,949 B. Board renders, Hold button only when not preparing, `startWatching(repaint, repaint)` at boot plus a 1 s paint-only tick. **Gate not met** (ws path broken). |
+| `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 40,343 B, **untouched**. Carries the **same bootstrap-ordering bug** (module `<script>` at line 99, bootstrap IIFE at 107–118 inside the module body). Fix it in Phase 5. |
 | `index.html` | Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
@@ -197,30 +215,12 @@ Deleted this session (repo-root junk, never committed): `_probe1.ps1`, `_rc.d.tx
 
 ## 4. Next actions, in order (the plan is already decomposed — follow it)
 
-**A. Finish Phase 4 (do this first).**
-1. Backend first: run `alter publication supabase_realtime add table orders;` in the SQL Editor;
-   correct `sql/04_realtime.sql` (the publication **is** required — replace the "NO dashboard click
-   and NO SQL" claim, keep everything else).
-2. Rewrite `assets/realtime.js` to the **published 2.118.0 API** — never pin a major version that
-   has not been proven to resolve on the CDN. Options, in order of preference:
-   - `import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/+esm')` →
-     `createClient(CONFIG.sbUrl, CONFIG.sbKey, { accessToken: () => getSessionToken() })` →
-     `client.channel('orders-watch')` → `.on('postgres_changes', { event:'INSERT', schema:'public', table:'orders' }, cb)`
-     (and the UPDATE binding) → `.subscribe(cb, timeout)` with
-     `config: { postgres_changes_options: { wait: true } }` so a dead subscription reports
-     `CHANNEL_ERROR` instead of silently looking healthy; teardown via
-     `client.removeChannel(ch)` / `await client.disconnect(1000, 'stop')`.
-   - Or drop the CDN import entirely and hand-roll the Phoenix wire
-     (`wss://<sbUrl>/websocket?apikey=…`, `phx_join` with the `filters` array
-     `["event=eq.INSERT","schema=eq.public","table=eq.orders"]`, `vsn: "2.0.0"`,
-     `access_token` on join, heartbeat every 25 s). realtime-js 2.118.0 internals confirm that
-     vocabulary (`filters` builder emits `col=op.value`, `phx_join`/`phx_leave`/`access_token`
-     keys, `teardown`, `heartbeat`).
-   - Either way: `mode` must only become `'ws'` **after** the server confirms the subscription,
-     and the polling fallback must stay honest.
-3. Re-run the §1.4 probe after the publication toggle; only then call the gate met.
-   Gate: "Paid order appears without refresh; Mark as Served writes `served_at` +
-   `fulfillment_time_seconds`."
+**A. Phase 4 — DONE (gate met, committed `19fef79`).** `alter publication … add table orders` applied
+live; `sql/04_realtime.sql` corrected; `assets/realtime.js` ported to supabase-js 2.118.0. Live gate
+evidence: dot = WS live, paid card appears on the KDS with **no reload**, and `mark_served` wrote
+`served_at` + `fulfillment_time_seconds` (authenticated DB read — see §2). Nothing left to do here.
+
+**Start here tomorrow → B. Phase 5 — owner (`frontend-lead` then `backend-lead`).**
 
 **B. Phase 5 — owner (`frontend-lead` then `backend-lead`).** Fix `owner.html`'s bootstrap
 ordering first; add the staff email to `sl_config.ownerEmails`; Storage upload into the public
@@ -297,10 +297,11 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
+19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0   <- origin/main (HEAD)
 c581d84 feat(phase-4): kitchen KDS board and realtime watcher (ws path still broken)
 a3fed04 fix(transport): call SQL RPCs under /rest/v1/rpc/ and hoist config bootstrap
 c80f8bc fix(sql): repair plpgsql bodies and migrate RLS to verified PG grammar
-4217d22 chore: ignore deploy-root vercel.json artifact          <- origin/main before this push
+4217d22 chore: ignore deploy-root vercel.json artifact
 ```
 
 Conventional-commit style is the project's; keep `fix(phase-N):` / `feat(phase-N):` prefixes and
