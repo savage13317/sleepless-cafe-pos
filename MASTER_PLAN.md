@@ -155,7 +155,11 @@ export const CONFIG = {
 
 - **Phase A (GH Pages):** owner pastes URL + publishable key into `?sburl=&sbkey=` once, page writes it to `localStorage`. Nothing secret is committed.
 - **Phase B (Vercel):** `SL_SB_URL`, `SL_SB_KEY`, `SL_OWNER_EMAILS` are Vercel env vars; `inject-config.mjs` runs as the build command and writes `assets/config.generated.js`. Service-role key stays **out** of the browser entirely.
-- `.gitignore` must exclude: `assets/config.generated.js`, `.env*`, `*.local`, `**/.vercel/**`.
+### 4a. Platform facts verified live (Phases 1–3) — read before touching transport or auth
+
+- **RPC transport:** this project's API gateway exposes SQL functions **only** under `POST /rest/v1/rpc/<fn>`. Bare `/rest/v1/<fn>` resolves against tables/views and answers `PGRST205 "Could not find the table 'public.<fn>'"` even when PostgREST's schema cache reports the RPC as loaded. `api.js` `callSql()` therefore targets `/rest/v1/rpc/…`; table reads (`getRows`) keep the bare form. Do not "fix" this by reloading the schema cache — the path form is the cause.
+- **Phase-A staff account:** the free project's built-in email sender is exhausted (`over_email_send_rate_limit`), so `POST /auth/v1/signup` only succeeds with **"Confirm email" toggled OFF** on the dashboard `Authentication → Sign In / Providers` page (autoconfirm). That toggle is currently OFF. The dev staff identity is `staff-probe@sleepless-cafe.test`; `cashier.html` persists `{email,password}` in `localStorage.sl_auth` — client-side password storage is an accepted **Phase-A tradeoff**, removed in Phase B.
+- **`assets/ui.js` is not created** (deviation): each page ships its own inline UI, which keeps every sub-agent dispatch inside the 1–3 file budget in §3.
 
 **Owner auth (Phase 5):** Supabase Auth PKCE (`signInWithPassword`/magic-redirect) → id_token handed to `api.js` → RLS grants owner writes only when a valid owner session is present. `CONFIG.ownerEmails` is an allowlist check, not the security boundary — RLS is.
 

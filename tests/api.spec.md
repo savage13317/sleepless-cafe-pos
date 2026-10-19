@@ -5,6 +5,12 @@ Truth sources: `assets/api.js` (transport) + `sql/02_functions.sql` (state machi
 
 ## 1. RPC table - export | HTTP target | named-arg body | success envelope (keys verbatim from 02_functions.sql)
 
+TRANSPORT NOTE (verified live): this project's API gateway exposes SQL functions ONLY under
+`/rest/v1/rpc/<fn>`. The bare `/rest/v1/<fn>` form answers 404 `PGRST205 "Could not find the
+table 'public.<fn>'"` even though PostgREST's schema cache reports the RPCs as loaded. Every
+`POST /rest/v1/<fn>` row below therefore really targets `POST /rest/v1/rpc/<fn>`; table reads
+(`getMenu` / `getCategories`) keep the bare form, which does resolve.
+
 | api.js export | HTTP target | named-arg body | success envelope |
 |---|---|---|---|
 | `createOrder(name, items)` | `POST /rest/v1/create_order` | `{"customer_name":"Ana Reyes","items":[{"menu_item_id":"<uuid>","size":"Regular","quantity":2}]}` | `{"success":true,"data":{"code":"04271","order_id":"<uuid>","total":120.00,"items_count":2},"error":null}` |

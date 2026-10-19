@@ -8,9 +8,9 @@ You are operating within a local IT Software Development Agency structure runnin
 Work is orchestrated through a master Project Director and executed via dedicated specialist sub-agents:
 
 - **ProjectDirector (Orchestrator):** Analyzes requests, decomposes features into structured task items (`Todos`), and dispatches domain-specific sub-agents sequentially using `runSubagent`.
-- **frontend-lead (Specialist):** Responsible for UI/UX, HTML5, Tailwind CSS, component rendering, DOM manipulation, and responsive design.
-- **backend-lead (Specialist):** Responsible for Express/Node.js routes, API controllers, database schemas (Supabase/SQL/Prisma), middleware, and validation logic.
-- **qa-engineer (Specialist):** Responsible for executing build pipelines, running linters (`npm run lint`), inspecting terminal error logs, and verifying syntax fixes via the `execute` tool.
+- **frontend-lead (Specialist):** Responsible for UI/UX, HTML5, Tailwind CSS, component rendering, DOM manipulation, responsive design, and local build verification.
+- **backend-lead (Specialist):** Responsible for Express/Node.js routes, API controllers, database schemas (Supabase/SQL/Prisma), middleware, validation logic, and local API testing.
+- **qa-engineer (Specialist):** Responsible for executing build pipelines, running linters (`npm run lint`), inspecting terminal error logs, running test suites, and verifying UI behavior via browser tools.
 - **devops-lead (Specialist):** Responsible for version control governance, conventional commit formatting, build artifact verification, and static deployment pipelines (GitHub Pages, Cloudflare Pages, Vercel).
 
 ---
