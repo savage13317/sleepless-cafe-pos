@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Owner surface: unlisted AND unindexed (Gate B). No other POS page links
+         here, and nothing here links to menu / cashier / kitchen. -->
+    <meta name="robots" content="noindex">
+    <title>Sleepless Cafe | Owner</title>
+
+    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above the inline config script below, because that script reads the
+         :root custom properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
+         Gate A: tokens.css is the single source of truth for brand colors, so
+         changing a brand color means editing tokens.css only. The neutral
+         fallback below is deliberately not a brand color — it exists so a failed
+         stylesheet load can never inject `undefined` into generated CSS. -->
+    <script>
+        (function () {
+            var cs = getComputedStyle(document.documentElement);
+            var T = function (name) {
+                var v = cs.getPropertyValue(name).trim();
+                return v || 'black'; /* neutral fallback, never a brand color */
+            };
+            var F = function (name) {
+                return T(name).split(',').map(function (s) { return s.trim(); });
+            };
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                dark: T('--brand-dark'),
+                                card: T('--brand-card'),
+                                cardHover: T('--brand-card-hover'),
+                                accent: T('--brand-accent'),
+                                accentLight: T('--brand-accent-light'),
+                                cream: T('--brand-cream'),
+                                muted: T('--brand-muted'),
+                                border: T('--brand-border')
+                            }
+                        },
+                        fontFamily: {
+                            sans: F('--font-sans'),
+                            serif: F('--font-serif')
+                        }
+                    }
+                }
+            };
+        })();
+    </script>
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: wordmark + live clock (HH:MM:SS, 1s tick). -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-crown text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Owner</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Back office · <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
+            </p>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-crown text-brand-accent mr-1"></i>
+            Sleepless Cafe · Owner · signed in as <span id="ownerid" class="font-mono text-brand-cream">nobody</span> · prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+    <!-- ========================== OWNER APP (ES module) ====================
+     Imports from './assets/api.js' AND './assets/config.js' — unlike cashier/kitchen, this
+     page needs CONFIG itself, because the owner gate reads CONFIG.ownerEmails
+     client-side. The SQL layer double-gates every owner RPC with
+     OWNER_SESSION_REQUIRED (sql/02_functions.sql), so this client check is a
+     courtesy, not the security boundary. JSON envelopes never throw; every
+     error code maps to one human line, never a stack trace.
+     ====================================================================== -->
+<script type="module">
+    import {
+        signIn, setSessionToken, salesSummary, turnoverStats, getMenu, getCategories,
+        createCategory, reorderCategories, deleteCategory, createMenuItem,
+        updateMenuItem, uploadImage, listActivePending, voidOrder, fmtPeso, fmtTime, fmtCountdown,
+    } from './assets/api.js';
+    import { CONFIG } from './assets/config.js';
+
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
+       Same flow as cashier.html. Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        if (!url && !key) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+
+    /* --- state ----------------------------------------------------------- */
+    let tab = 'sales';          // sales | turnover | menu | categories
+    let sales = null;           // last salesSummary payload
+    let salesErr = null;        // error code from the last sales read
+    let salesGrain = 'daily';
+    let salesDays = 30;
+    let turn = null;            // last turnoverStats payload
+    let turnErr = null;
+    let turnDays = 30;
+    let cats = [];              // categories, display_order asc
+    let items = [];             // menu items
+    let menuErr = null;
+    let claims = [];            // live unpaid claims (list_active_pending rows)
+    let claimsErr = null;
+    let armed = null;           // { orderId, code, until } — void two-step guard
+    let toast = null;           // {msg, until} — transient success line
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy: one human line per code, never a stack trace, never the
+         raw code string. */
+    const GATE_COPY = "Owner sign-in required — add ?email=&password= to this URL once.";
+    const AUTH_COPY = "Those credentials weren't accepted. Check the URL — nothing was stored.";
+    const NOT_OWNER = "Not your dashboard. This account isn't on the owner list — the board stays closed.";
+    const MENU_SYNC = "Done — menu.html picks this up on next load.";
+    const ERR_COPY = {
+        OWNER_SESSION_REQUIRED: "The cafe didn't recognize you as an owner. Sign in with an owner account.",
+        PERMISSION_DENIED: "The cafe won't let this account do that.",
+        INVALID_GRAIN: "That time grain isn't supported — try daily, monthly or yearly.",
+        CATEGORY_NOT_FOUND: "That category isn't there any more — refresh and try again.",
+        INVALID_CATEGORY_NAME: "That category name is empty or too long — try a shorter one.",
+        INVALID_ORDER: "The new shelf order didn't take — refresh the list and try again.",
+        INVALID_FALLBACK: "Pick a different category for the items to move to, or say to delete them too.",
+        INVALID_ITEM_NAME: "That item name is empty or too long — keep it under 120 characters.",
+        INVALID_SIZES: "Every size line needs the form Small=120 — check the sizes and try again.",
+        MENU_ITEM_NOT_FOUND: "That item isn't on the menu any more — refresh and try again.",
+        ORDER_NOT_FOUND: "That claim isn't on the board any more — it was paid, voided, or its time ran out.",
+        NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
+        MENU_ITEM_UNAVAILABLE: "That item isn't on the menu right now.",
+        NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
+        HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening tell the manager.",
+    };
+    const copyFor = (code) => ERR_COPY[code] ?? ERR_COPY.HTTP;
+
+    /* --- gate card: no session / wrong account = nothing renders --------- */
+    function renderGate(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 text-center my-6">
+               <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing on this dashboard loads until an owner session exists.</p>
+             </div>`;
+    }
+
+    /* --- live clock: HH:MM:SS on a 1s tick ------------------------------- */
+    const pad = (n) => String(n).padStart(2, '0');
+    const clockEl = document.getElementById('clock');
+    function tick() {
+        const d = new Date();
+        clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    /* --- helpers --------------------------------------------------------- */
+    function daysBackISO(n) { return new Date(Date.now() - n * 86400000).toISOString(); }
+    function fmtMMSS(secs) { return fmtCountdown(Math.floor(Number(secs) || 0)); }
+
+    /* --- tab bar: .nav-btn.active comes from assets/app.css -------------- */
+    const TABS = [
+        { key: 'sales', label: 'Sales', icon: 'fa-chart-line' },
+        { key: 'turnover', label: 'Turnover', icon: 'fa-rotate' },
+        { key: 'menu', label: 'Menu', icon: 'fa-utensils' },
+        { key: 'categories', label: 'Categories', icon: 'fa-layered' },
+    ];
+    function renderTabBar() {
+        const btns = TABS.map((t) => {
+            const active = t.key === tab ? ' nav-btn active' : ' nav-btn';
+            return `<button class="${active} rounded-xl whitespace-nowrap text-sm px-4 py-2" data-tab="${t.key}">
+                    <i class="fa-solid ${t.icon} mr-1"></i>${t.label}</button>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">${btns}</div>`;
+    }
+
+    /* --- TAB 1: sales ---------------------------------------------------- */
+    function renderBars(buckets) {
+        const max = Math.max(1, ...buckets.map((b) => Number(b.revenue ?? 0)));
+        const bars = buckets.map((b) => {
+            const pct = Math.max(4, Math.round((Number(b.revenue ?? 0) / max) * 100));
+            return `<div class="flex flex-col items-end justify-end text-center w-1/8 min-w-10 mx-1">
+                      <div class="bg-brand-accent rounded-t-md" style="height:${pct}%"></div>
+                      <span class="text-brand-muted text-xs mt-1 whitespace-nowrap">${esc(String(b.label ?? '').slice(0, 10))}</span>
+                    </div>`;
+        }).join('');
+        return `<div class="flex items-stretch h-44 overflow-x-auto">${bars}</div>`;
+    }
+
+    /* --- live unpaid claims panel (lives in the Sales tab, Tab 1) --------
+       Voiding is an OWNER-only decision (cashier.html:88 keeps the TTL as the
+       cashier's only removal path). void_order is fenced to pending_payment in
+       sql/02_functions.sql, so a paid order cannot be reached from here.
+       Two-step guard: first tap arms the row, the button re-renders as
+       "Confirm void", second tap executes. An arm older than 12 s is dropped,
+       so a half-finished thought can never fire later. */
+    function renderClaims() {
+        if (claimsErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(claimsErr)}</p></div>`;
+        }
+        if (!claims.length) {
+            return `<div class="glass-card rounded-xl p-3 my-4"><p class="text-brand-muted text-xs">No live claims right now — every unpaid order has either been paid or aged out.</p></div>`;
+        }
+        const rows = claims.map((c) => {
+            const secs = Number(c.seconds_remaining ?? 0);
+            const armedNow = armed && String(armed.orderId) === String(c.order_id ?? '');
+            const lastCall = secs < 120;
+            return `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3 flex-wrap ${armedNow ? 'outline outline-1 outline-brand-accentLight' : ''}" data-claim-row data-order-id="${esc(c.order_id ?? '')}" data-code="${esc(c.code ?? '')}">
+                    <span class="font-mono text-brand-accentLight text-lg whitespace-nowrap">${esc(c.code ?? '')}</span>
+                    <span class="text-brand-cream text-sm whitespace-nowrap ml-2">${esc(c.customer_name ?? '')}</span>
+                    <span class="font-mono text-brand-muted text-xs ml-2">${fmtTime(c.created_at)}</span>
+                    <span class="font-mono text-xs ml-2 ${lastCall ? 'text-brand-accentLight' : 'text-brand-muted'}">${fmtCountdown(secs)}</span>
+                    <span class="text-brand-muted text-xs ml-2">${Number(c.items_count ?? 0)} items · ${fmtPeso(c.total_amount)}</span>
+                    <button class="rounded-lg px-3 py-1 text-xs min-height-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-void>${armedNow ? 'Confirm void' : 'Void claim'}</button>
+                  </div>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Live unpaid claims — voiding deletes the row and its items</p>
+                ${rows}
+              </div>`;
+    }
+
+    function renderSales() {
+        const controls = `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">
+                <span class="text-brand-muted text-xs uppercase tracking-wider">Grain</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="daily">Daily</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="monthly">Monthly</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="yearly">Yearly</button>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Range</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="7">7 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="30">30 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="365">365 days</button>
+              </div>`;
+        if (!sales) {
+            const note = salesErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(salesErr)}</p>` : '';
+            return `${controls}${note}${renderClaims()}`;
+        }
+        const buckets = sales.buckets || [];
+        const exportBtn = `<button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-export>Export CSV</button>`;
+        return `${controls}
+            <div class="glass-card rounded-xl p-5 my-4">
+              <div class="flex items-center gap-6 flex-wrap">
+                <span class="font-mono text-brand-accentLight text-2xl">${fmtPeso(sales.revenue)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Revenue</span>
+                <span class="font-mono text-brand-cream ml-4">${Number(sales.completed_count ?? 0)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Completed</span>
+                <span class="font-mono text-brand-cream ml-4">${fmtPeso(sales.aov)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Avg / order</span>
+              </div>
+              <div class="mt-4">${renderBars(buckets)}</div>
+              ${exportBtn}
+            </div>${renderClaims()}`;
+    }
+
+    /* --- TAB 2: turnover ------------------------------------------------- */
+    function renderHeat(turnObj) {
+        const byHour = {};
+        (turnObj.peak_hours || []).forEach((h) => { byHour[Number(h.hour ?? -1)] = Number(h.orders ?? 0); });
+        const maxO = Math.max(1, ...Object.values(byHour));
+        const cells = [];
+        for (let h = 0; h < 24; h++) {
+            const v = byHour[h] || 0;
+            const op = 0.06 + 0.94 * (v / maxO);
+            cells.push(`<div class="flex flex-col items-center justify-center w-1/24 min-w-10 mx-px">
+                          <div class="h-8 rounded-sm bg-brand-accent flex items-center justify-center" style="opacity:${op.toFixed(2)}">
+                            <span class="text-brand-cream text-xs">${v || ''}</span>
+                          </div>
+                          <span class="text-brand-muted text-xs mt-1">${pad(h)}</span>
+                        </div>`);
+        }
+        return `<div class="glass-card rounded-xl p-3 my-4 overflow-x-auto flex items-stretch gap-1">${cells.join('')}</div>`;
+    }
+
+    function renderTurnover() {
+        const controls = `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">
+                <span class="text-brand-muted text-xs uppercase tracking-wider">Range</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="7">7 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="30">30 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="365">365 days</button>
+              </div>`;
+        if (!turn) {
+            const note = turnErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(turnErr)}</p>` : '';
+            return `${controls}${note}`;
+        }
+        return `${controls}
+            <div class="glass-card rounded-xl p-5 my-4">
+              <div class="flex items-center gap-6 flex-wrap">
+                <span class="font-mono text-brand-cream text-2xl">${Number(turn.sample_size ?? 0)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Sampled orders</span>
+                <span class="font-mono text-brand-accentLight ml-4">${fmtMMSS(turn.avg_fulfillment_seconds)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Avg fulfilment</span>
+                <span class="font-mono text-brand-accentLight ml-4">${fmtMMSS(turn.p95_fulfillment_seconds)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">P95</span>
+              </div>
+              <p class="text-brand-muted text-xs mt-2">Busiest hours (orders per hour-of-day):</p>
+              <div class="mt-3">${renderHeat(turn)}</div>
+            </div>`;
+    }
+
+    /* --- TAB 3: menu ----------------------------------------------------- */
+    function catOptions(selectedName) {
+        return cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}"${c.name === selectedName ? ' selected' : ''}>${esc(c.name ?? '')}</option>`).join('');
+    }
+    function itemOptions() {
+        return items.map((it) => `<option value="${esc(it.name ?? '')}" data-item-id="${esc(it.id ?? '')}">${esc(it.name ?? '')}</option>`).join('');
+    }
+
+    function renderItemCard(it) {
+        const sizes = (it.sizes_and_prices || []).map((s) =>
+            `<span class="text-brand-muted text-xs whitespace-nowrap mr-2">${esc(String(s.size ?? ''))} ${fmtPeso(s.price)}</span>`).join('');
+        const off = it.is_available ? '' : `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap text-xs">Hidden</span>`;
+        return `<div class="glass-card rounded-xl p-4 my-3" data-menu-item data-item-id="${esc(it.id ?? '')}">
+                <p class="text-brand-cream text-base font-serif whitespace-nowrap">${esc(it.name ?? '')}</p>
+                ${it.description ? `<p class="text-brand-muted text-xs mt-1">${esc(it.description)}</p>` : ''}
+                <div class="flex items-center gap-3 flex-wrap mt-2">${sizes}${off}</div>
+              </div>`;
+    }
+
+    function renderMenu() {
+        if (menuErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(menuErr)}</p></div>`;
+        }
+        const groups = cats.map((c) => {
+            const own = items.filter((it) => String(it.category_id) === String(c.id));
+            if (!own.length) return `<p class="text-brand-muted text-xs mt-1">No items in ${esc(c.name ?? '')} yet.</p>`;
+            return `<p class="text-brand-accent text-xs uppercase tracking-wider mt-3">${esc(c.name ?? '')}</p>${own.map(renderItemCard).join('')}`;
+        }).join('');
+        const addForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an item</p>
+                <select data-add-cat class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${catOptions('')}</select>
+                <input data-add-name type="text" placeholder="Item name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
+                <input data-add-desc type="text" placeholder="Description (optional)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <textarea data-add-sizes placeholder="Small=120&#10;Large=150" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
+                <select data-add-avail class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Available">Available</option><option value="Hidden">Hidden</option></select>
+                <input data-add-photo type="file" accept="image/*" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-add-item>Add item</button>
+              </div>`;
+        const editForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Edit an item (blank = keep)</p>
+                <select data-edit-item class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${itemOptions()}</select>
+                <input data-edit-name type="text" placeholder="New name (blank = keep)" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
+                <input data-edit-desc type="text" placeholder="New description (blank = keep)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <textarea data-edit-sizes placeholder="Small=120&#10;Large=150 (blank = keep)" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
+                <select data-edit-avail class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Keep">Keep availability</option><option value="Available">Make available</option><option value="Hidden">Make hidden</option></select>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-edit-item-go>Save edits</button>
+              </div>`;
+        return `${groups || '<p class="text-brand-muted text-sm mt-2">The menu is empty right now.</p>'}${addForm}${editForm}`;
+    }
+
+    /* --- TAB 4: categories ----------------------------------------------- */
+    function renderCategories() {
+        if (menuErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(menuErr)}</p></div>`;
+        }
+        const rows = cats.map((c) => `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3" data-cat-row data-cat-id="${esc(c.id ?? '')}">
+                <span class="font-mono text-brand-muted text-xs mr-2">${Number(c.display_order ?? 0)}</span>
+                <span class="text-brand-cream text-sm font-serif whitespace-nowrap">${esc(c.name ?? '')}</span>
+                <button class="rounded-lg px-2 py-1 text-xs min-height-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-up>Up</button>
+                <button class="rounded-lg px-2 py-1 text-xs min-height-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-down>Down</button>
+              </div>`).join('');
+        const fallbackOptions = cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}">${esc(c.name ?? '')}</option>`).join('');
+        const delForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Delete a category — move items to which category?</p>
+                <select data-del-cat class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}">${esc(c.name ?? '')}</option>`).join('')}</select>
+                <select data-del-fallback class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-2">${fallbackOptions}<option value="Delete items too" data-drop-items>Delete items too</option></select>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-delete-cat>Delete category</button>
+              </div>`;
+        const createForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">New category</p>
+                <input data-new-cat-name type="text" placeholder="Category name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-create-cat>Create</button>
+              </div>`;
+        return `${rows || '<p class="text-brand-muted text-sm mt-2">No categories yet.</p>'}${createForm}${delForm}`;
+    }
+
+    function renderToast() {
+        if (!toast || Date.now() >= toast.until) return '';
+        return `<div class="glass-card rounded-xl p-3 my-3 text-center">
+                <p class="text-brand-accentLight text-sm font-semibold">${toast.msg}</p>
+              </div>`;
+    }
+
+    function paint() {
+        const body = tab === 'sales' ? renderSales()
+                   : tab === 'turnover' ? renderTurnover()
+                   : tab === 'menu' ? renderMenu()
+                   : renderCategories();
+        document.getElementById('app').innerHTML = renderTabBar() + renderToast() + body;
+    }
+
+    /* --- reads ----------------------------------------------------------- */
+    async function loadSales() {
+        const res = await salesSummary(daysBackISO(salesDays), new Date().toISOString(), salesGrain);
+        if (!res.success) { salesErr = res.error?.code ?? 'HTTP'; sales = null; return; }
+        salesErr = null;
+        sales = res.data || {};
+    }
+    async function loadTurnover() {
+        const res = await turnoverStats(daysBackISO(turnDays), new Date().toISOString());
+        if (!res.success) { turnErr = res.error?.code ?? 'HTTP'; turn = null; return; }
+        turnErr = null;
+        turn = res.data || {};
+    }
+    async function loadMenu() {
+        const c = await getCategories();
+        if (!c.success) { menuErr = c.error?.code ?? 'HTTP'; return; }
+        const m = await getMenu();
+        if (!m.success) { menuErr = m.error?.code ?? 'HTTP'; return; }
+        menuErr = null;
+        cats = c.data || [];
+        items = m.data || [];
+        cats.sort((a, b) => Number(a.display_order ?? 0) - Number(b.display_order ?? 0));
+    }
+    async function loadClaims() {
+        const res = await listActivePending();
+        if (!res.success) { claimsErr = res.error?.code ?? 'HTTP'; claims = []; return; }
+        claimsErr = null;
+        claims = res.data || [];
+        claims.sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+    }
+
+    function say(msg) { toast = { msg, until: Date.now() + 6000 }; }
+
+    /* --- CSV export: built client-side from the buckets already in hand -- */
+    function csvField(v) {
+        const s = String(v ?? '');
+        return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    async function exportCsv() {
+        if (!sales) return;
+        const lines = ['label,revenue,count'];
+        (sales.buckets || []).forEach((b) => lines.push(`${csvField(b.label)},${Number(b.revenue ?? 0)},${Number(b.count ?? 0)}`));
+        const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `sales-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        say('CSV saved to your downloads.');
+        paint();
+    }
+
+    /* --- menu actions ---------------------------------------------------- */
+    function parseSizes(text) {
+        const out = [];
+        for (const line of String(text ?? '').split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq < 0) continue;
+            const label = line.slice(0, eq).trim();
+            const price = Number(line.slice(eq + 1));
+            if (label && Number.isFinite(price)) out.push({ size: label, price });
+        }
+        return out;
+    }
+    function selectedOption(select) {
+        const opts = select.querySelectorAll('option');
+        for (const o of opts) if (o.value === select.value) return o;
+        return opts.length ? opts[0] : null;
+    }
+
+    async function addItem() {
+        const catSel = document.querySelector('[data-add-cat]');
+        const opt = catSel ? selectedOption(catSel) : null;
+        const catId = opt?.dataset.catId;
+        const name = (document.querySelector('[data-add-name]')?.value ?? '').trim();
+        if (!catId || !name) { say('Pick a category and type an item name first.'); return paint(); }
+        const desc = document.querySelector('[data-add-desc]')?.value ?? '';
+        const sizes = parseSizes(document.querySelector('[data-add-sizes]')?.value);
+        const avail = (document.querySelector('[data-add-avail]')?.value ?? 'Available') !== 'Hidden';
+        let imgUrl = null;
+        const photoInput = document.querySelector('[data-add-photo]');
+        const file = photoInput ? photoInput.files[0] : null;
+        if (file) {
+            const buf = await file.arrayBuffer();
+            const up = await uploadImage(file.name, new Uint8Array(buf), file.type || 'image/jpeg');
+            if (!up.success) { say(copyFor(up.error?.code ?? 'HTTP')); return paint(); }
+            imgUrl = up.data;
+        }
+        const res = await createMenuItem(catId, name, desc, imgUrl, sizes, avail);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    async function editItem() {
+        const sel = document.querySelector('[data-edit-item]');
+        const opt = sel ? selectedOption(sel) : null;
+        const id = opt?.dataset.itemId;
+        if (!id) { say('Pick the item to edit first.'); return paint(); }
+        const name = document.querySelector('[data-edit-name]')?.value ?? '';
+        const desc = document.querySelector('[data-edit-desc]')?.value ?? '';
+        const sizesRaw = (document.querySelector('[data-edit-sizes]')?.value ?? '').trim();
+        const sizes = sizesRaw ? parseSizes(sizesRaw) : null;
+        const availText = document.querySelector('[data-edit-avail]')?.value ?? 'Keep';
+        const avail = availText === 'Keep' ? null : availText === 'Available';
+        const res = await updateMenuItem(id, name, desc, null, sizes, avail);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* --- category actions ------------------------------------------------ */
+    async function moveCategory(catId, dir) {
+        const idx = cats.findIndex((c) => String(c.id) === String(catId));
+        const swap = dir === 'up' ? idx - 1 : idx + 1;
+        if (idx < 0 || swap < 0 || swap >= cats.length) { say('Already at that end.'); return paint(); }
+        const next = cats.slice();
+        [next[idx], next[swap]] = [next[swap], next[idx]];
+        const res = await reorderCategories(next.map((c) => c.id));
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* doCreateCategory / doDeleteCategory: the `do` prefix keeps these local
+       names clear of the imported api.js bindings of the same SQL function. */
+    async function doCreateCategory() {
+        const name = (document.querySelector('[data-new-cat-name]')?.value ?? '').trim();
+        if (!name) { say('Type a category name first.'); return paint(); }
+        const end = cats.reduce((m, c) => Math.max(m, Number(c.display_order ?? 0)), 0) + 1;
+        const res = await createCategory(name, end);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    async function doDeleteCategory() {
+        const catSel = document.querySelector('[data-del-cat]');
+        const opt = catSel ? selectedOption(catSel) : null;
+        const catId = opt?.dataset.catId;
+        if (!catId) { say('Pick the category to delete first.'); return paint(); }
+        const fbSel = document.querySelector('[data-del-fallback]');
+        const fbOpt = fbSel ? selectedOption(fbSel) : null;
+        /* "Delete items too" carries data-drop-items and maps to a null
+           fallback — the SQL layer then removes the items as well. */
+        const fallback = fbOpt?.dataset?.dropItems !== undefined ? null : (fbOpt?.dataset?.catId ?? null);
+        if (String(fallback ?? '') === String(catId)) { say("Can't move items into the category being deleted."); return paint(); }
+        const res = await deleteCategory(catId, fallback);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* --- void a live claim (owner-only; two-step confirm) ---------------
+       doVoid is fenced server-side: void_order matches status='pending_payment'
+       only, so a paid / preparing / served order returns NOT_VOIDABLE and the
+       row is untouched. Nothing here invents an id — it comes from the row. */
+    async function doVoid(orderId, code) {
+        if (!orderId) { say('Pick the claim to void first.'); return paint(); }
+        if (!(armed && String(armed.orderId) === String(orderId))) {
+            armed = { orderId, code, until: Date.now() + 12000 };
+            say(`Void drops claim ${code} and its items for good. Tap "Confirm void" again to do it.`);
+            return paint();
+        }
+        armed = null;
+        const res = await voidOrder(orderId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); await loadClaims(); return paint(); }
+        say(`Claim ${code} voided — the row and its items are gone.`);
+        await loadClaims();
+        paint();
+    }
+
+    /* --- event wiring (delegated, keyed by data-*, so repainting cards
+         never loses handlers) ------------------------------------------- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (armed && Date.now() >= armed.until) armed = null;   // stale arm never fires
+        if (t.dataset.tab !== undefined) { tab = t.dataset.tab; paint(); }
+        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.export !== undefined) void exportCsv();
+        else if (t.dataset.turnDays !== undefined) { turnDays = Number(t.dataset.turnDays); void (async () => { await loadTurnover(); paint(); })(); }
+        else if (t.dataset.addItem !== undefined) void addItem();
+        else if (t.dataset.editItemGo !== undefined) void editItem();
+        else if (t.dataset.moveUp !== undefined || t.dataset.moveDown !== undefined) {
+            const row = t.closest('[data-cat-row]');
+            if (row) void moveCategory(row.dataset.catId, t.dataset.moveUp !== undefined ? 'up' : 'down');
+        }
+        else if (t.dataset.createCat !== undefined) void doCreateCategory();
+        else if (t.dataset.deleteCat !== undefined) void doDeleteCategory();
+        else if (t.dataset.void !== undefined) {
+            const row = t.closest('[data-claim-row]');
+            if (row) void doVoid(row.dataset.orderId, row.dataset.code ?? '');
+        }
+    });
+
+    /* --- boot: auth gate first, THEN the owner gate (client courtesy; the
+         SQL layer double-gates with OWNER_SESSION_REQUIRED). The password is
+         never rendered, logged, or echoed — only the signed-in email. ---- */
+    (async function () {
+        const q = new URLSearchParams(location.search);
+        let email = q.get('email'), password = q.get('password');
+        if (!email || !password) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+            if (saved && saved.email && saved.password) { email = saved.email; password = saved.password; }
+        }
+        if (!email || !password) { renderGate(GATE_COPY); return; }
+
+        const res = await signIn(email, password);
+        if (!res.success) {
+            renderGate(res.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : AUTH_COPY);
+            return;
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        const who = d?.user?.email || email;
+        document.getElementById('ownerid').textContent = who;
+
+        const owners = CONFIG.ownerEmails || [];
+        if (!owners.length || !owners.includes(who)) { renderGate(NOT_OWNER); return; }
+
+        await Promise.all([loadSales(), loadTurnover(), loadMenu(), loadClaims()]);
+        paint();
+    })();
+</script>
+</body>
+</html>

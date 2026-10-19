@@ -1,0 +1,63 @@
+-- ============================================================================
+-- 04_realtime.sql :: PHASE 1d - REALTIME WIRE CONTRACT (Supabase / PostgreSQL 15)
+-- APPLY AFTER 03_rls.sql
+--
+-- Supabase Realtime is NOT a SQL table and not a SQL setting: it is a
+-- Dashboard preference - "Settings -> Realtime -> event whitelist" per table.
+-- There is no UPDATE config / ALTER TABLE statement that turns it on, so the
+-- executable part of this file is only a sanity check. Everything else is the
+-- contract realtime.js (Phase 4) must match.
+--
+-- ----------------------------------------------------------------------------
+-- WHITELIST FOR `orders`  ->  INSERT + DELETE + UPDATE
+--   INSERT  both boards need it: a new claim appears on the cashier board.
+--   DELETE  the CASHIER needs it. Expiry and void are physical DELETEs (01
+--           core invariant), so a row vanishes the instant it expires. Without
+--           DELETE whitelisted the cashier socket keeps a ghost row on screen
+--           after purge_expired_orders() removed it.
+--   UPDATE  the KITCHEN needs it: paid -> preparing -> served is an UPDATE,
+--           and a paid order is never deleted, so kitchen does not need DELETE.
+--
+-- DO NOT WHITELIST `order_items`.
+--   sql/01 declares order_id REFERENCES orders ON DELETE CASCADE, so every
+--   orders DELETE cascades into N order_items DELETEs. Whitelisting that table
+--   floods the cashier socket with child events it never asked for. Line items
+--   arrive inside the payload of the orders event instead.
+--
+-- DASHBOARD ACTION (manual, once, on the Supabase project):
+--   Settings -> Realtime -> event whitelist, table = orders, events =
+--   INSERT, DELETE, UPDATE. Leave order_items off.
+-- ----------------------------------------------------------------------------
+
+
+-- The only thing verifiable from SQL: the tables that emit events exist and
+-- are the ones realtime subscribes to. (No preference is readable here.)
+SELECT 'orders' AS realtime_table, 'INSERT, DELETE, UPDATE' AS whitelisted_events;
+SELECT 'order_items' AS realtime_table, 'NOT whitelisted (CASCADE flood)' AS whitelisted_events;
+
+
+-- ----------------------------------------------------------------------------
+-- EXACT WIRES + FILTER STRINGS for realtime.js (Phase 4) to copy.
+-- Endpoint: wss://<sbUrl>/websocket?apikey=<publishable-key>
+-- Authorize with the same publishable key / session token api.js already uses;
+-- the service-role key is never involved.
+--
+-- CASHIER socket (orders board) - new claims + rows that vanish:
+--   eq:orders.INSERT
+--   eq:orders.DELETE
+-- KITCHEN socket (queue) - new paid orders + status moves:
+--   eq:orders.INSERT
+--   eq:orders.UPDATE
+--
+-- supabase-js v4 equivalent (the `ph` event filter the wire above encodes):
+--   .on('insert', cb)   .on('delete', cb)   -> cashier
+--   .on('insert', cb)   .on('update', cb)   -> kitchen
+--   (subscribe to the table name 'orders' only; never 'order_items'.)
+--
+-- FALLBACK: if the WS drops on a cafe tablet, realtime.js reverts to 3s
+-- polling on list_active_pending() (cashier) and kitchen_queue() (kitchen).
+-- Those functions return the same jsonb the socket delivers, so the UI must
+-- look identical in both modes - no banner, no degraded view.
+-- ============================================================================
+-- END 04_realtime.sql
+-- ============================================================================
