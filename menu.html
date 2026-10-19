@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Public customer entry point: intentionally indexable (Gate B keeps noindex
+         only on cashier / kitchen / owner). -->
+    <meta name="description" content="Sleepless Cafe — browse the menu, build your order, and get your 5-digit claim code.">
+    <title>Sleepless Cafe | Menu</title>
+
+    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above the inline config script below, because that script reads the
+         :root custom properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
+         Gate A: tokens.css is the single source of truth for brand colors, so
+         changing a brand color means editing tokens.css only. The neutral
+         fallback below is deliberately not a brand hex — it exists so a failed
+         stylesheet load can never inject `undefined` into generated CSS. -->
+    <script>
+        (function () {
+            var cs = getComputedStyle(document.documentElement);
+            var T = function (name) {
+                var v = cs.getPropertyValue(name).trim();
+                return v || '#000000'; /* neutral fallback, never a brand color */
+            };
+            var F = function (name) {
+                return T(name).split(',').map(function (s) { return s.trim(); });
+            };
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                dark: T('--brand-dark'),
+                                card: T('--brand-card'),
+                                cardHover: T('--brand-card-hover'),
+                                accent: T('--brand-accent'),
+                                accentLight: T('--brand-accent-light'),
+                                cream: T('--brand-cream'),
+                                muted: T('--brand-muted'),
+                                border: T('--brand-border')
+                            }
+                        },
+                        fontFamily: {
+                            sans: F('--font-sans'),
+                            serif: F('--font-serif')
+                        }
+                    }
+                }
+            };
+        })();
+    </script>
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: wordmark + browse line. Deliberately contains NO
+         links to cashier / kitchen / owner — staff surfaces are unlisted here. -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-5xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-mug-hot text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">SLEEPLESS CAFE</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">Browse the menu — tap a category to start.</p>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-5xl w-full mx-auto px-4 flex-1"></main>
+
+    <!-- Name field lives OUTSIDE #app so re-rendering the menu/cart never
+         destroys it. Print rule: only the success card survives on paper. -->
+    <div id="namefield" class="max-w-5xl w-full mx-auto px-4"></div>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i>
+            Sleepless Cafe · Prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+    <!-- ============================ MENU APP (ES module) =======================
+     Imports from './assets/api.js' (the folder prefix is required — this page
+     sits at repo root, so a bare './api.js' would 404); api.js imports config.js
+     itself, so config.js is not imported here.
+     The config bootstrap below runs before any api call.
+     ====================================================================== -->
+<script type="module">
+    import { getCategories, getMenu, createOrder, fmtPeso } from './assets/api.js';
+
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
+       Must run before any api call. Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        if (!url && !key) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+
+    /* --- state ----------------------------------------------------------- */
+    let categories = [];            // [{id,name,display_order}]
+    let menu = [];                  // raw rows
+    let cart = new Map();           // key: menu_item_id + '\0' + size -> {itemId,size,qty}
+    let activeCat = null;           // category id currently tabbed
+    let orderResult = null;         // {code,name} once placed — success screen mode
+
+    const keyOf = (id, size) => id + '\u0000' + size;
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy: one human line per code, brand-accent-light on glass.
+         The raw code string is never shown to the customer. */
+    const ERR_COPY = {
+        INVALID_CUSTOMER_NAME: "We need your name at the counter.",
+        INVALID_ITEMS: "Your cart looks empty — add something before checking out.",
+        MENU_ITEM_UNAVAILABLE: "One of those items just went away. We refreshed the menu, adjust your cart and try again.",
+        INVALID_SIZE: "That size isn't on the board anymore. Pick another size and try again.",
+        CODE_EXHAUSTED: "We're out of claim codes right now — please try again in a few minutes.",
+        NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
+        HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening let the barista know.",
+    };
+
+    /* --- load catalogue -------------------------------------------------- */
+    async function loadCatalogue() {
+        const [cRes, mRes] = await Promise.all([getCategories(), getMenu()]);
+        for (const r of [cRes, mRes]) {
+            if (!r.success) return r;
+        }
+        categories = cRes.data || [];
+        menu = (mRes.data || []).filter((m) => m.is_available === true);
+        return null;
+    }
+
+    const itemsIn = (catId) =>
+        menu.filter((m) => m.category_id === catId);
+
+    /* --- render: header + tab bar + item stack + cart -------------------- */
+    function renderTabs() {
+        const visible = categories.filter((c) => itemsIn(c.id).length > 0);
+        if (!visible.length) return '';
+        if (!visible.some((c) => c.id === activeCat)) activeCat = visible[0].id;
+        const tabs = visible.map((c) => {
+            const on = c.id === activeCat ? ' nav-btn active' : '';
+            return `<button data-cat="${esc(c.id)}" class="rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap${on}">${esc(c.name)}</button>`;
+        }).join('');
+        return `<div class="flex items-center gap-2 overflow-x-auto pb-2 mt-4"
+                    style="scrollbar-width:thin">${tabs}</div>`;
+    }
+
+    function renderItems(catId) {
+        return itemsIn(catId).map((m) => renderItem(m)).join('');
+    }
+
+    function renderItem(m) {
+        const sizes = Array.isArray(m.sizes_and_prices) ? m.sizes_and_prices : [];
+        const img = (m.image_url && String(m.image_url).trim())
+            ? `<img src="${esc(m.image_url)}" alt="${esc(m.name)}" loading="lazy"
+                 class="w-full h-40 object-cover rounded-xl mb-3">`
+            /* seed data ships empty image_url: this glass tile with a fa-solid
+               icon is the intentional placeholder, not a broken image. */
+            : `<div class="glass-card rounded-xl h-40 mb-3 flex items-center justify-center">
+                 <i class="fa-solid fa-coffee text-brand-accent text-5xl opacity-60"></i>
+               </div>`;
+        const chips = sizes.map((s) =>
+            `<button data-size="${esc(s.size)}"
+               class="rounded-md px-2 py-1 text-xs font-semibold border border-brand-border/60 whitespace-nowrap">${esc(s.size)} · ${fmtPeso(s.price)}</button>`
+        ).join('');
+        return `<div class="glass-card rounded-xl p-4 mb-4" data-item="${esc(m.id)}">
+            ${img}
+            <h3 class="text-brand-cream text-lg font-bold tracking-tight mt-2">${esc(m.name)}</h3>
+            ${m.description ? `<p class="text-brand-muted text-sm mt-1">${esc(m.description)}</p>` : ''}
+            <div class="flex items-center gap-2 flex-wrap mt-3">${chips}</div>
+            <div class="flex items-center justify-between mt-3">
+              <div class="flex items-center space-x-2">
+                <button class="rounded-md px-2 py-1 text-sm font-bold text-brand-accentLight" data-qty="-1">−</button>
+                <span class="font-mono text-brand-cream text-sm" data-qty-display>1</span>
+                <button class="rounded-md px-2 py-1 text-sm font-bold text-brand-accentLight" data-qty="1">+</button>
+              </div>
+              <button class="btn-primary rounded-xl whitespace-nowrap text-xs ml-auto" data-add>Add to Cart</button>
+            </div>
+          </div>`;
+    }
+
+    function renderCart() {
+        const rows = [...cart.values()];
+        if (!rows.length) {
+            return `<div class="glass-card rounded-xl p-4 text-center">
+                <p class="text-brand-muted text-sm">Your cart is empty. Tap a card and Add to Cart.</p>
+              </div>`;
+        }
+        let count = 0, total = 0;
+        const lines = rows.map((r) => {
+            const item = menu.find((m) => m.id === r.itemId);
+            const price = (item?.sizes_and_prices ?? []).find((s) => s.size === r.size)?.price ?? 0;
+            count += r.qty; total += price * r.qty;
+            return `<div class="flex items-center justify-between py-1 border-b border-brand-border/40">
+                <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)} · ×${r.qty}</span>
+                <span class="text-brand-accentLight font-mono text-sm">${fmtPeso(price * r.qty)}</span>
+              </div>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-4 mt-4">
+            <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Your cart · ${count} item${count === 1 ? '' : 's'}</p>
+            ${lines}
+            <p class="text-brand-accentLight font-mono text-sm mt-2">Total ${fmtPeso(total)}</p>
+            <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-checkout>Proceed to Checkout</button>
+          </div>`;
+    }
+
+    /* --- main render ----------------------------------------------------- */
+    function render() {
+        if (orderResult) return renderSuccess();
+        const tabs = renderTabs();
+        return tabs + renderItems(activeCat) + renderCart();
+    }
+
+    function renderError(res) {
+        const copy = ERR_COPY[res.error?.code] ?? ERR_COPY.HTTP;
+        const fixable = res.error?.code === 'MENU_ITEM_UNAVAILABLE' || res.error?.code === 'INVALID_SIZE';
+        return `<div class="glass-card rounded-xl p-4 my-4">
+            <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+            ${fixable ? renderCart() : ''}
+          </div>`;
+    }
+
+    /* --- success screen: code is a STRING, leading zeros preserved ------- */
+    function renderSuccess() {
+        const code = String(orderResult.code);
+        const name = esc(orderResult.name);
+        return `<div class="glass-card rounded-xl p-6 text-center">
+            <p class="text-brand-muted text-xs uppercase tracking-wider mb-3">Your claim code</p>
+            <div class="font-mono text-brand-accentLight text-5xl sm:text-7xl font-bold tracking-widest my-2"
+                 style="letter-spacing:0.35em">${esc(code)}</div>
+            <p class="text-brand-cream text-lg font-serif mt-2">${name}</p>
+            <p class="text-brand-accentLight text-sm mt-3 max-w-prose">
+                Order Placed! Please present your code ${esc(code)} and your name (${name}) to the cashier within 60 minutes to process payment.
+            </p>
+            <p class="text-brand-muted text-xs mt-3">
+                Keep this screen open until the cashier confirms — do not close or refresh this page.
+            </p>
+          </div>`;
+    }
+
+    /* --- checkout flow --------------------------------------------------- */
+    async function checkout() {
+        const items = [...cart.values()].map((r) => ({
+            menu_item_id: r.itemId, size: r.size, quantity: r.qty,
+        }));
+        const res = await createOrder(pendingName, items);
+        if (res.success) {
+            const d = res.data || {};
+            /* code stays a string end-to-end; never Number() it. */
+            orderResult = { code: String(d.claim_code ?? d.code ?? ''), name: pendingName };
+            cart = new Map();   // second order starts fresh
+        }
+        return res;
+    }
+
+    let pendingName = '';
+    let awaitingName = false;   /* true only after "Proceed to Checkout" is tapped */
+
+    function setName(name) {
+        const trimmed = String(name || '').trim();
+        if (!trimmed) {
+            pendingName = '';
+            return { errorCopy: "We need your name at the counter." };
+        }
+        if (trimmed.length > 100) return { errorCopy: "That name is too long — keep it under 100 characters." };
+        pendingName = trimmed;
+        return null;
+    }
+
+    /* --- event wiring (delegated, so re-rendering cards keeps handlers) -- */
+    function setQty(itemId, delta) {
+        const cur = currentQty(itemId);
+        const next = Math.min(999, Math.max(1, cur + delta));
+        setQtyDisplay(itemId, next);
+    }
+    function currentQty(itemId) {
+        const el = document.querySelector(`[data-item="${CSS.escape(itemId)}"] [data-qty-display]`);
+        return el ? parseInt(el.textContent, 10) || 1 : 1;
+    }
+    function setQtyDisplay(itemId, n) {
+        const el = document.querySelector(`[data-item="${CSS.escape(itemId)}"] [data-qty-display]`);
+        if (el) el.textContent = String(n);
+    }
+    function addToCart(itemId) {
+        const item = menu.find((m) => m.id === itemId);
+        if (!item) return;
+        const card = document.querySelector(`[data-item="${CSS.escape(itemId)}"]`);
+        /* default to the first offered size if the customer never picked one */
+        const size = card?.dataset.size ?? (item.sizes_and_prices?.[0]?.size ?? '');
+        const qty = currentQty(itemId);
+        const k = keyOf(itemId, size);
+        const existing = cart.get(k);
+        if (existing) existing.qty = Math.min(999, existing.qty + qty);
+        else cart.set(k, { itemId, size, qty });
+    }
+
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.dataset.cat) { activeCat = t.dataset.cat; paint(); }
+        else if (t.dataset.qty) {
+            const card = t.closest('[data-item]');
+            if (card) setQty(card.dataset.item, Number(t.dataset.qty));
+        }
+        else if (t.dataset.add !== undefined) {
+            const card = t.closest('[data-item]');
+            if (card) { addToCart(card.dataset.item); paint(); }
+        }
+        else if (t.dataset.size) {
+            /* remember the chosen size on the card itself; a different size
+               is a separate cart line (key = id + NUL + size) */
+            const card = t.closest('[data-item]');
+            if (card) card.dataset.size = t.dataset.size;
+        }
+        else if (t.dataset.checkout !== undefined) {
+            awaitingName = true;   /* checkout prompts for the name next */
+            paint();
+        }
+        else if (t.dataset.placeorder !== undefined) {
+            const input = document.querySelector('[data-name-input]');
+            const bad = setName(input ? input.value : '');
+            if (bad) { paintNameCopy(bad.errorCopy); } else { void runCheckout(); }
+        }
+    });
+
+    function paint() {
+        document.getElementById('app').innerHTML = render();
+    }
+
+    async function runCheckout() {
+        awaitingName = false;
+        const res = await checkout();
+        if (res.success) {
+            document.getElementById('namefield').innerHTML = '';
+        }
+        paint();
+        if (!res.success) paintError(res);
+    }
+    function paintError(res) {
+        document.getElementById('app').innerHTML = renderError(res);
+    }
+
+    /* --- name input: inline, trimmed, 1–100 chars ------------------------ */
+    function openNameInput() {
+        const host = document.getElementById('namefield');
+        host.innerHTML =
+            `<div class="glass-card rounded-xl p-4 mt-4">
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Full name at the counter</label>
+               <input type="text" placeholder="e.g. Maria Santos"
+                      class="rounded-md p-2 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full"
+                      data-name-input></div>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-placeorder>Place Order</button>`;
+        const input = host.querySelector('[data-name-input]');
+        input.addEventListener('change', () => {
+            if (!awaitingName) return;
+            const bad = setName(input.value);
+            if (bad) { paintNameCopy(bad.errorCopy); } else { void runCheckout(); }
+        });
+    }
+
+    /* swap the field for a one-line copy, then bring the field back */
+    function paintNameCopy(copy) {
+        const host = document.getElementById('namefield');
+        host.innerHTML = `<div class="glass-card rounded-xl p-3"><p class="text-brand-accentLight text-sm">${esc(copy)}</p></div>`;
+        openNameInput();
+    }
+
+    /* --- boot ------------------------------------------------------------ */
+    (async function () {
+        const loadErr = await loadCatalogue();
+        if (loadErr) {
+            document.getElementById('app').innerHTML = renderError(loadErr);
+            return;
+        }
+        paint();
+        openNameInput();
+    })();
+    </script>
+</body>
+</html>
