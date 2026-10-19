@@ -104,6 +104,27 @@
      access token to setSessionToken. The password is never rendered, logged,
      or echoed anywhere — only the signed-in email is shown.
      ====================================================================== -->
+<!-- ============================ CONFIG BOOTSTRAP (classic) ===================
+     Classic (non-module) on purpose: a page's module body runs AFTER its
+     imported modules, so a bootstrap inside the module body would execute
+     after config.js already resolved CONFIG from localStorage. Values are
+     never printed or echoed.                                                    -->
+<script>
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
+       Classic (non-module) on purpose: must run before config.js is evaluated.
+       Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        if (!url && !key) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
 <script type="module">
     import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
     /* `mode` is a live binding: reading it inside a function sees realtime.js'
@@ -183,11 +204,15 @@
         const items = (r.items || []).map((it) => {
             const qty = Number(it.quantity ?? 1);
             const size = String(it.size ?? '');
+            /* the KDS card shows the UNIT price, not the line subtotal: a cook
+               calling the expo needs "2 x large at ₱120", and the subtotal
+               invites a mental multiplication error under pressure. kitchen_queue()
+               carries both fields, so this is a choice, not a data gap. */
             return `<li class="text-brand-cream text-sm py-1">
                       <span class="font-mono text-brand-accentLight mr-2">${qty}×</span>
                       <span class="whitespace-nowrap">${esc(it.item_name ?? '')}</span>
                       ${size ? `<span class="text-brand-muted ml-1 text-xs uppercase tracking-wider">${esc(size)}</span>` : ''}
-                      <span class="font-mono text-brand-accentLight ml-2 whitespace-nowrap">${fmtPeso(it.subtotal)}</span>
+                      <span class="font-mono text-brand-accentLight ml-2 whitespace-nowrap">${fmtPeso(it.unit_price)}</span>
                     </li>`;
         }).join('');
         const holdBtn = holding
@@ -323,10 +348,17 @@
         watching = true;
         await refreshQueue();
         paint();
-        /* the socket (or its 3s polling fallback) drives every later repaint;
-           no separate board timer is needed on top of it. */
-        await startWatching(repaint, refreshQueue);
-        setInterval(modeLabel, 1000);
+        /* `repaint` fills BOTH slots: realtime.js calls the poll callback
+           synchronously on its 3 s timer, so that callback has to re-read AND
+           paint — handing it a bare read (refreshQueue alone) would update `rows`
+           behind a board that never repaints. The socket callback is the same
+           function, so a dropped socket gives an identical-looking board. */
+        await startWatching(repaint, repaint);
+        /* one 1 s tick: repaint from the cached rows (no network read) so the
+           elapsed counter ticks up between realtime events, and re-read the
+           live `mode` binding so the dot follows a socket that dies mid-service.
+           The queue itself is re-read only by the socket callback / poll. */
+        setInterval(() => { modeLabel(); if (watching) paint(); }, 1000);
         modeLabel();
     })();
     </script>
