@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Staff surface: unlisted AND unindexed (Gate B). No other POS page links
+         here, and nothing here links to menu / cashier / owner. -->
+    <meta name="robots" content="noindex">
+    <title>Sleepless Cafe | Kitchen</title>
+
+    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above the inline config script below, because that script reads the
+         :root custom properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
+         Gate A: tokens.css is the single source of truth for brand colors, so
+         changing a brand color means editing tokens.css only. The neutral
+         fallback below is deliberately not a brand color — it exists so a failed
+         stylesheet load can never inject `undefined` into generated CSS. -->
+    <script>
+        (function () {
+            var cs = getComputedStyle(document.documentElement);
+            var T = function (name) {
+                var v = cs.getPropertyValue(name).trim();
+                return v || 'black'; /* neutral fallback, never a brand color */
+            };
+            var F = function (name) {
+                return T(name).split(',').map(function (s) { return s.trim(); });
+            };
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                dark: T('--brand-dark'),
+                                card: T('--brand-card'),
+                                cardHover: T('--brand-card-hover'),
+                                accent: T('--brand-accent'),
+                                accentLight: T('--brand-accent-light'),
+                                cream: T('--brand-cream'),
+                                muted: T('--brand-muted'),
+                                border: T('--brand-border')
+                            }
+                        },
+                        fontFamily: {
+                            sans: F('--font-sans'),
+                            serif: F('--font-serif')
+                        }
+                    }
+                }
+            };
+        })();
+    </script>
+</head>
+
+<!-- `kds` opts this page into the high-contrast KDS scope in assets/app.css
+     (larger base type, heavier weight, white text, >= 48px tap targets) so the
+     board reads at ~2 m on a wall-mounted tablet. No color is declared here. -->
+<body class="kds min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: wordmark + mode dot (WS live / polling) + clock.
+         The dot text is written by realtime.js' `mode` export on every tick;
+         both modes look identical on the board itself, only the dot differs. -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-utensils text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Kitchen</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                <span class="rounded-full w-3 h-3 bg-brand-accent" id="modedot" aria-label="live feed mode">●</span>
+                <span class="ml-2" id="modelabel">connecting</span> ·
+                <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
+            </p>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-utensils text-brand-accent mr-1"></i>
+            Sleepless Cafe · Kitchen · signed in as <span id="staffid" class="font-mono text-brand-cream">nobody</span> · prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+    <!-- ========================= KITCHEN APP (ES module) ===================
+     Imports from './assets/api.js' and './assets/realtime.js' (folder prefix
+     required — this page sits at repo root); api.js imports config.js
+     itself, so config.js is not imported here. realtime.js also imports config.js, so it is imported
+     alongside api.js — no cycle, config.js has no imports of its own.
+     Orders are RLS-denied to anon, so this page signs in first and hands the
+     access token to setSessionToken. The password is never rendered, logged,
+     or echoed anywhere — only the signed-in email is shown.
+     ====================================================================== -->
+<script type="module">
+    import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
+    /* `mode` is a live binding: reading it inside a function sees realtime.js'
+       later updates, so the header dot follows a socket that dies mid-service. */
+    import { startWatching, stopWatching, mode as realtimeMode } from './assets/realtime.js';
+
+    /* --- state ----------------------------------------------------------- */
+    let rows = [];              // live queue from kitchenQueue()
+    let boardError = null;      // error code from the last queue read
+    let toast = null;           // {msg, until} — transient success line
+    let staffEmail = null;      // email of the signed-in staff session
+    let watching = false;       // so a realtime event never races a manual read
+
+    /* Codes are STRINGS end-to-end: leading zeros are significant, so a code is
+       never passed through Number(). The 5-digit code is display-only here —
+       the actions that need one (mark_served / set_preparing) take order_id,
+       which kitchen_queue() hands us directly, so nothing is looked up by code
+       and no code-shape check is needed on this page. */
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy: one human line per code, never a stack trace, never the
+         raw code string. NOT_SERVABLE / NOT_PREPARABLE get their own wording
+         because they mean different things to a cook mid-service. */
+    const GATE_COPY = "Staff sign-in required — add ?email=&password= to this URL once.";
+    const AUTH_COPY = "That staff account wasn't accepted. Check the credentials in the URL — nothing was stored.";
+    const SERVED_COPY = "Marked as served — card leaves the board.";
+    const HOLD_COPY = "On hold — card stays on the board.";
+    const ERR_COPY = {
+        ORDER_EXPIRED: "This order's time is up, please place a new one",
+        NOT_SERVABLE: "That order isn't waiting in the kitchen any more — it's already done.",
+        NOT_PREPARABLE: "That order is already on hold, no need to hold it again.",
+        ORDER_NOT_FOUND: "That card isn't on the board right now.",
+        NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
+        HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening let the barista know.",
+    };
+
+    /* --- live clock: HH:MM:SS on a 1s tick ------------------------------- */
+    const pad = (n) => String(n).padStart(2, '0');
+    const clockEl = document.getElementById('clock');
+    function tick() {
+        const d = new Date();
+        clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    /* --- elapsed counter: recomputed CLIENT-side every second from paid_at,
+         not from the poll's elapsed_seconds (that value is frozen at the moment
+         the server built the payload, so it would stall between reads). The
+         server's elapsed_seconds is only the seed for the very first paint. */
+    function elapsedSeconds(paidAt) {
+        const t = Date.parse(String(paidAt ?? ''));
+        if (Number.isNaN(t)) return 0;
+        return Math.max(0, Math.floor((Date.now() - t) / 1000));
+    }
+
+    /* --- auth gate card (no session = no board) -------------------------- */
+    function renderAuthGate(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 text-center my-6">
+               <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing on this board loads until a staff session exists — orders are invisible to anonymous visitors.</p>
+             </div>`;
+    }
+
+    /* --- one card per queued order ---------------------------------------
+         data-order-card + data-order-id carry the uuid so the delegated click
+         handler can act after a repaint replaced the DOM. Tap targets are
+         >= 48px: .btn-primary is 56px min-height in app.css, the Hold button
+         carries explicit min-height here. */
+    function renderCard(r) {
+        const code = String(r.code ?? '');
+        const secs = elapsedSeconds(r.paid_at);
+        const holding = String(r.status ?? '') === 'preparing';
+        const items = (r.items || []).map((it) => {
+            const qty = Number(it.quantity ?? 1);
+            const size = String(it.size ?? '');
+            return `<li class="text-brand-cream text-sm py-1">
+                      <span class="font-mono text-brand-accentLight mr-2">${qty}×</span>
+                      <span class="whitespace-nowrap">${esc(it.item_name ?? '')}</span>
+                      ${size ? `<span class="text-brand-muted ml-1 text-xs uppercase tracking-wider">${esc(size)}</span>` : ''}
+                      <span class="font-mono text-brand-accentLight ml-2 whitespace-nowrap">${fmtPeso(it.subtotal)}</span>
+                    </li>`;
+        }).join('');
+        const holdBtn = holding
+            ? ''
+            : `<button class="rounded-lg whitespace-nowrap text-xs min-height-[48px] px-3 py-2 mt-2 bg-brand-card/60 border border-brand-border text-brand-cream" data-hold>Hold</button>`;
+        return `<div class="glass-card rounded-xl p-5 my-4" data-order-card data-order-id="${esc(r.order_id ?? '')}" data-code="${esc(code)}">
+                <div class="flex items-baseline space-between flex-wrap">
+                  <p class="text-brand-cream text-lg font-serif whitespace-nowrap">${esc(r.customer_name ?? '')}</p>
+                  <div class="font-mono text-brand-accentLight tracking-widest" style="letter-spacing:0.3em">${esc(code)}</div>
+                </div>
+                <div class="flex items-center gap-3 mt-2 flex-wrap">
+                  <span class="text-brand-muted text-xs uppercase tracking-wider">Paid ${fmtTime(r.paid_at)}</span>
+                  <span class="font-mono text-brand-accentLight text-2xl whitespace-nowrap">${fmtCountdown(secs)}</span>
+                  ${holding ? `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap">ON HOLD</span>` : ''}
+                </div>
+                <ul class="list-none mt-3">${items || '<li class="text-brand-muted text-sm">No line items in the payload.</li>'}</ul>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-served>Mark as Served</button>
+                ${holdBtn}
+              </div>`;
+    }
+
+    function renderBoard() {
+        const body = rows.map(renderCard).join('');
+        const empty = `<div class="glass-card rounded-xl p-5 my-4 text-center">
+                       <p class="text-brand-muted text-sm">Nothing waiting in the kitchen.</p>
+                     </div>`;
+        const note = boardError
+            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
+            : '';
+        return `${body || empty}${note}`;
+    }
+
+    function renderToast() {
+        if (!toast || Date.now() >= toast.until) return '';
+        return `<div class="glass-card rounded-xl p-3 my-3 text-center">
+                <p class="text-brand-accentLight text-sm font-semibold">${toast.msg}</p>
+              </div>`;
+    }
+
+    function paint() {
+        document.getElementById('app').innerHTML = renderToast() + renderBoard();
+    }
+
+    /* --- queue read: 'preparing' rows stay in the payload, so a card a cook
+         held cannot silently vanish; 'served' rows are absent, so a card
+         leaves the view on the next read with no ghost behind it. --------- */
+    async function refreshQueue() {
+        const res = await kitchenQueue();
+        if (!res.success) { boardError = res.error?.code ?? 'HTTP'; return; }
+        boardError = null;
+        rows = res.data || [];
+        /* oldest paid first — the board is a make-river, the first paid order
+           is the one the expo should be calling. */
+        rows.sort((a, b) => String(a.paid_at ?? '').localeCompare(String(b.paid_at ?? '')));
+    }
+
+    /* --- realtime: a paid order appears WITHOUT a page refresh. onEvent
+         repaints from a fresh kitchenQueue() read; poll is the same read on a
+         3s timer, so a dropped socket gives an identical-looking board. ---- */
+    const repaint = () => { if (watching) void refreshQueue().then(paint); };
+
+    function modeLabel() {
+        /* realtime.js owns `mode`; re-read the live binding each tick so the
+           dot follows a socket that dies mid-service. */
+        const live = realtimeMode === 'ws';
+        const m = document.getElementById('modelabel');
+        const dot = document.getElementById('modedot');
+        m.textContent = live ? 'WS live' : 'polling';
+        dot.classList.toggle('bg-brand-accent', live);
+        dot.classList.toggle('bg-brand-muted', !live);
+    }
+
+    /* --- actions: on success the board is re-read BEFORE painting, so the
+         card is already gone (or already flagged ON HOLD) when it repaints. */
+    async function serve(orderId) {
+        const res = await markServed(orderId);
+        if (res.success) {
+            toast = { msg: SERVED_COPY, until: Date.now() + 6000 };
+        } else {
+            boardError = res.error?.code ?? 'HTTP';
+        }
+        await refreshQueue();
+        paint();
+    }
+
+    async function hold(orderId) {
+        const res = await setPreparing(orderId);
+        if (res.success) {
+            toast = { msg: HOLD_COPY, until: Date.now() + 6000 };
+        } else {
+            boardError = res.error?.code ?? 'HTTP';
+        }
+        await refreshQueue();
+        paint();
+    }
+
+    /* --- event wiring (delegated, so repainting cards keeps handlers) ---- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.dataset.served !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card && card.dataset.orderId) void serve(card.dataset.orderId);
+        }
+        else if (t.dataset.hold !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card && card.dataset.orderId) void hold(card.dataset.orderId);
+        }
+    });
+
+    /* --- boot: auth gate first, then the board, then the realtime feed ---- */
+    (async function () {
+        const q = new URLSearchParams(location.search);
+        let email = q.get('email'), password = q.get('password');
+        if (!email || !password) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+            if (saved && saved.email && saved.password) { email = saved.email; password = saved.password; }
+        }
+        if (!email || !password) { renderAuthGate(GATE_COPY); return; }
+
+        const res = await signIn(email, password);
+        if (!res.success) {
+            renderAuthGate(res.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : AUTH_COPY);
+            return;
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        staffEmail = d?.user?.email || email;
+        /* only the email is surfaced — the password is never rendered */
+        document.getElementById('staffid').textContent = staffEmail;
+
+        watching = true;
+        await refreshQueue();
+        paint();
+        /* the socket (or its 3s polling fallback) drives every later repaint;
+           no separate board timer is needed on top of it. */
+        await startWatching(repaint, refreshQueue);
+        setInterval(modeLabel, 1000);
+        modeLabel();
+    })();
+    </script>
+</body>
+</html>
