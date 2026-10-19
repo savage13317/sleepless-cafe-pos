@@ -9,12 +9,31 @@
    FILTER STRINGS (the `ph` param the wire encodes):
      eq:orders.INSERT      a new paid order lands on the board
      eq:orders.UPDATE      paid -> preparing -> served status moves
-   supabase-js v4 equivalent of those filters:
-     .on('insert', cb)  .on('update', cb)   on table 'orders'
-   The dynamic import below is therefore pinned to @supabase/supabase-js@4:
-   client.socket([...]) / socket.on / ensureStarted / client.close are the v4
-   surface, and v2 has no client.socket at all (it routed realtime through the
-   separate @supabase/socket.io package), so importing @2 could never connect.
+   supabase-js 2.118.0 equivalent of those filters:
+     .on('postgres_changes', { event:'INSERT', schema:'public', table:'orders' }, cb)
+     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'orders' }, cb)
+   on the 'orders' table. The dynamic import below is therefore pinned to
+   @supabase/supabase-js@2.118.0 — the only version proven to resolve on the CDN.
+
+   FIX: the import moved from @supabase/supabase-js@4 to @2.118.0.
+     Verified against the npm registry + jsDelivr: NO 4.x exists. dist-tags for
+     both @supabase/supabase-js and @supabase/realtime-js are latest 2.118.0,
+     3.0.0-next.29 (prerelease), rc 2.100.0-rc.0, beta 2.112.0-beta.0, canary
+     2.118.0-canary.2. `cdn.jsdelivr.net/npm/@supabase/supabase-js@4/+esm` returns
+     the 48-char body "Couldn't find the requested release version 4." so the old
+     dynamic import THREW, the catch fired, mode stayed 'poll', and the board ran
+     silently on the 3 s polling fallback — Phase 4's gate was never met.
+     Worse, the published 2.118.0 API is Phoenix-channel based and has NO
+     client.socket, NO ensureStarted, and NO client.close — the three members the
+     old code called — so even a successful @4 import could not have connected.
+     Rewritten here to the verified 2.x surface: createClient -> client.channel
+     -> .on('postgres_changes', ...) -> .subscribe(cb, timeout) with
+     postgres_changes_options.wait:true, teardown via removeChannel + async
+     disconnect. Never pin a major version that has not been proven to resolve.
+
+   Delivery is RLS-gated ("records are sent only to clients allowed to read them"):
+   anon has no SELECT policy on orders (sql/03_rls.sql), so the socket MUST carry
+   the staff bearer or it delivers nothing — see accessToken below.
 
    DELETE IS NOT SUBSCRIBED HERE. A paid order is never deleted — it is UPDATEd
    to 'served' and simply stops being returned by kitchen_queue(), so the card
@@ -70,15 +89,18 @@ export async function startWatching(onEvent, poll) {
   try {
     /* dynamic import so a failed CDN load falls back to polling instead of
        breaking the page — a static import would make the whole module fail. */
-    const sb = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@4/+esm');
+    const sb = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/+esm');
     const { createClient } = sb;
-    const bearer = getSessionToken() || CONFIG.sbKey;
     client = createClient(CONFIG.sbUrl, CONFIG.sbKey, {
-      /* Realtime events are RLS-filtered for the subscriber: anon cannot read
-         orders (sql/03_rls.sql), so the socket must carry the staff bearer or
-         it would deliver nothing and the board would sit on polling forever. */
-      global: { headers: { apikey: CONFIG.sbKey, Authorization: `Bearer ${bearer}` } },
-      accessToken: bearer,
+      /* accessToken is a CALLBACK (() => Promise<string|null>), called on connect
+         AND on every heartbeat — so it re-reads the session token each time. The
+         staff bearer is required: anon cannot SELECT orders, so RLS would deliver
+         nothing over the socket. Do NOT pass global:{headers:...} — websocket
+         connections cannot carry headers in 2.118.0 (apikey rides in params). */
+      accessToken: () => {
+        const t = getSessionToken();
+        return t || null;
+      },
     });
   } catch {
     /* no supabase-js: stay on polling, silently */
@@ -86,16 +108,24 @@ export async function startWatching(onEvent, poll) {
 
   if (!client) { startPolling(poll); return; }
 
-  /* one handle so a socket error, a socket close, and stopWatching() all land
-     in the same place exactly once. `dead` is per-socket, so a close event that
-     fires AFTER stopWatching() already tore down cannot resurrect the socket
-     and cannot start a second polling timer. */
-  let socket = null;
+  /* one handle so a subscribe error, a socket close, and stopWatching() all land
+     in the same place exactly once. `dead` is per-socket, so a CLOSED event that
+     fires AFTER stopWatching() already tore down cannot resurrect the socket and
+     cannot start a second polling timer. Teardown in 2.118.0 = removeChannel(ch)
+     (or ch.unsubscribe()) then await client.disconnect(); disconnect is async
+     (returns "ok"|"timeout"), and stopWatching() must stay synchronous, so the
+     disconnect is fire-and-forget with a catch guard. */
+  let ch = null;
   let dead = false;
 
-  const closeBoth = () => {
-    try { if (socket) socket.close({ code: 1000 }); } catch { /* already gone */ }
-    try { client.close(); } catch { /* already gone */ }
+  const teardown = () => {
+    if (ch) { try { ch.unsubscribe(); } catch { /* already gone */ } }
+    if (client) {
+      try { client.removeChannel(ch); } catch { /* already gone */ }
+      /* disconnect is async ("ok"|"timeout"); fire-and-forget so stopWatching()
+         stays synchronous. */
+      try { void client.disconnect(1000, 'stop').catch(() => {}); } catch { /* already gone */ }
+    }
   };
 
   const handle = { close: null, drop: null };
@@ -103,34 +133,60 @@ export async function startWatching(onEvent, poll) {
     if (dead) return;
     dead = true;
     if (_live === handle) _live = null;
-    closeBoth();
+    teardown();
     startPolling(poll);              // the board keeps moving on the 3 s timer
   };
   const close = () => {
     if (dead) return;
     dead = true;
     if (_live === handle) _live = null;
-    closeBoth();
+    teardown();
   };
   handle.close = close;
   handle.drop = drop;
 
   try {
-    socket = await client.socket([
-      { type: 'subscribe', filter: 'eq:orders.INSERT' },
-      { type: 'subscribe', filter: 'eq:orders.UPDATE' },
-    ]);
-    _live = handle;                  // stopWatching() can tear this down now
     /* the page's callback is sync-safe and payload-agnostic (it re-reads
        kitchen_queue()), but a throw inside it must never kill the socket. */
     const deliver = (payload) => { try { onEvent(payload); } catch { /* page owns copy */ } };
-    socket.on('insert', deliver);    // a new paid order lands on the board
-    socket.on('update', deliver);    // paid -> preparing -> served status moves
-    socket.on('error', drop);
-    socket.on('close', drop);
-    await socket.ensureStarted();
+
+    /* wait:true holds the SUBSCRIBED callback until the SERVER confirms the
+       subscription, and reports CHANNEL_ERROR on failure — so the ws/poll
+       decision is honest, never optimistic. */
+    ch = client.channel('orders-watch', {
+      config: { postgres_changes_options: { wait: true } },
+    });
+    ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, deliver);
+    ch.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, deliver);
+    _live = handle;                  // stopWatching() can tear this down now
+
+    /* subscribe() is not itself awaitable for the join result, so wrap it: resolve
+       only when the callback reports SUBSCRIBED (server-confirmed). Any other
+       status (CLOSED / CHANNEL_ERROR / ERR) tears down to polling. A belt-and-
+       braces timeout below guarantees startWatching() never hangs the page boot
+       if the callback is never invoked at all — the board then runs on polling
+       and `mode` never lies about a socket that was never confirmed. */
+    await new Promise((resolve, reject) => {
+      const guard = setTimeout(() => { drop(); reject(new Error('subscribe unconfirmed')); }, 12000);
+      const clear = () => clearTimeout(guard);   // called on every exit path below
+      try {
+        ch.subscribe((status, err) => {
+          if (status === 'SUBSCRIBED' || status === 'ok') {
+            clear();
+            resolve();
+          } else {
+            clear();
+            drop();                  // CLOSED / CHANNEL_ERROR: polling takes over
+            reject(new Error('subscribe not confirmed'));
+          }
+        }, 10000);
+      } catch {
+        clear();
+        reject(new Error('subscribe threw'));
+      }
+    });
     mode = 'ws';                     // the dot: live channel, not the 3 s timer
   } catch {
-    drop();                          // socket refused: polling takes over
+    drop();                          // socket refused / not confirmed: polling takes over
   }
 }

@@ -6,10 +6,12 @@
 -- NO per-table "event whitelist" anywhere in the Dashboard (verified against
 -- the live project Settings and the current official docs). Per-table event
 -- selection is CLIENT-SIDE: the `eq:orders.INSERT`-style filter strings and
--- the .on(event) handlers realtime.js (Phase 4) sends. What SQL does control
--- is DELIVERY: Postgres Changes events are gated by the table's RLS (03_rls.sql).
--- Everything in this file is the contract realtime.js must match, plus two
--- sanity SELECTs. No other executable SQL belongs here.
+-- the .on(event) handlers realtime.js (Phase 4) sends. What SQL DOES control is
+-- MEMBERSHIP and DELIVERY: a table emits Postgres Changes events at all only if
+-- it is a member of the `supabase_realtime` publication (the ALTER line below),
+-- and the records it emits are gated by that table's RLS (03_rls.sql).
+-- Everything in this file is the contract realtime.js must match, the single
+-- executable ALTER PUBLICATION line, and two sanity SELECTs.
 --
 -- ----------------------------------------------------------------------------
 -- EVENT SELECTION FOR `orders`  ->  INSERT + DELETE + UPDATE (CLIENT-SIDE)
@@ -47,10 +49,19 @@
 --   (2), Max concurrent clients (200), and Pro-only disabled fields (Max
 --   events/s, Max presence events/s, Max payload size). There is no per-table
 --   event whitelist anywhere in Settings.
---   => Phase 1d requires NO dashboard click and NO SQL. The two toggles this
---   design needs (Enable Realtime service, Allow public access to channels)
---   are BOTH already ON by default; the executable part of this file is only
---   the sanity SELECTs below.
+--   => Phase 1d DOES require SQL. The two toggles above (Enable Realtime
+--   service, Allow public access to channels) are both already ON, but a
+--   table emits postgres_changes ONLY if it is a member of the
+--   `supabase_realtime` publication, and `orders` is not (see the FIX:
+--   paragraph below). The fix is one SQL Editor line, root role, and since
+--   this file is applied by pasting it into the SQL Editor, that line lives
+--   HERE:
+--
+--        alter publication supabase_realtime add table orders;
+--
+--   The four event toggles on that publication (INSERT/UPDATE/DELETE/
+--   TRUNCATE) are already ON, so adding the table is the only change needed.
+--   There is no dashboard click for it and no per-table whitelist to tick.
 --
 -- The Policies page (/realtime/policies, "Control access to your realtime
 -- channels") stays EMPTY on this design: we use public channels + RLS
@@ -67,6 +78,36 @@
 --   schema is locked); such a line aborts the transaction and skips every
 --   later statement, so never add one.
 -- ----------------------------------------------------------------------------
+
+
+-- ----------------------------------------------------------------------------
+-- FIX: `orders` was never published, so no postgres_changes event for it is
+--   EVER emitted. Verified live on /database/publications (project "POS",
+--   branch main):
+--     supabase_realtime                       id 16426  INSERT/UPDATE/DELETE/TRUNCATE all ON   0 tables
+--     supabase_realtime_messages_publication  id 17875  INSERT/UPDATE/DELETE/TRUNCATE all ON   1 table (realtime.messages)
+--   `orders` is in NEITHER publication, so the live Phase-4 probe (staff
+--   bearer, subscribe then a real create_order, then a 4 s wait) reported
+--   SUBSCRIBED and then events=[]: the transport works, the server simply had
+--   nothing to send. Realtime Postgres Changes REQUIRES publication
+--   membership - the earlier claim that "Phase 1d requires NO dashboard click
+--   and NO SQL" was wrong, and that is what blocked the Phase 4 gate.
+--   Fix (SQL Editor, root role): `alter publication supabase_realtime add
+--   table orders;` - ALTER PUBLICATION ... ADD TABLE is PG 9.3+ syntax, so it
+--   is safe for the PG 15 target (runtime is PG 17.11). The four toggles are
+--   already ON, so the table add is the whole change; apply it ONCE (the
+--   publication currently holds 0 tables).
+--   Do NOT add `order_items` to the publication: sql/01_schema.sql declares
+--   order_id REFERENCES orders ON DELETE CASCADE, so ONE orders DELETE
+--   cascades into N order_items DELETEs, and publishing that table floods the
+--   cashier socket with child events the boards never asked for. Line items
+--   already arrive inside the payload of the orders event.
+-- ----------------------------------------------------------------------------
+
+
+-- THE ONE EXECUTABLE LINE THIS FILE OWNS (SQL Editor, root role "postgres",
+-- applied as part of this pasted group). Everything below is verification only.
+alter publication supabase_realtime add table orders;
 
 
 -- The only thing verifiable from SQL: the tables that emit events exist and
@@ -89,9 +130,19 @@ SELECT 'order_items' AS realtime_table, 'NOT subscribed (CASCADE flood)' AS subs
 --   eq:orders.INSERT
 --   eq:orders.UPDATE
 --
--- supabase-js v4 equivalent (the `ph` event filter the wire above encodes):
---   .on('insert', cb)   .on('delete', cb)   -> cashier
---   .on('insert', cb)   .on('update', cb)   -> kitchen
+-- supabase-js 2.118.0 equivalent (the latest PUBLISHED release - there is no
+--   4.x: `@supabase/supabase-js@4` does not exist on npm or on jsDelivr, so
+--   importing it throws and the board silently runs on the polling fallback).
+--   The published surface is Phoenix-channel based and its event names are
+--   UPPERCASE, matching the eq: strings above:
+--     client.channel('orders-watch')
+--       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, cb)
+--       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'orders' }, cb)  -> cashier
+--       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, cb)  -> kitchen
+--       .subscribe(cb, 6000)
+--   The Phoenix wire those calls encode carries the filter strings
+--     eq:orders.INSERT / eq:orders.DELETE   (cashier)
+--     eq:orders.INSERT / eq:orders.UPDATE   (kitchen)
 --   (subscribe to the table name 'orders' only; never 'order_items'.)
 --
 -- FALLBACK: if the WS drops on a cafe tablet, realtime.js reverts to 3s
