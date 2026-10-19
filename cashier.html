@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Staff surface: unlisted AND unindexed (Gate B). No other POS page links
+         here, and nothing here links to menu / kitchen / owner. -->
+    <meta name="robots" content="noindex">
+    <title>Sleepless Cafe | Cashier</title>
+
+    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above the inline config script below, because that script reads the
+         :root custom properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
+         Gate A: tokens.css is the single source of truth for brand colors, so
+         changing a brand color means editing tokens.css only. The neutral
+         fallback below is deliberately not a brand color — it exists so a failed
+         stylesheet load can never inject `undefined` into generated CSS. -->
+    <script>
+        (function () {
+            var cs = getComputedStyle(document.documentElement);
+            var T = function (name) {
+                var v = cs.getPropertyValue(name).trim();
+                return v || 'black'; /* neutral fallback, never a brand color */
+            };
+            var F = function (name) {
+                return T(name).split(',').map(function (s) { return s.trim(); });
+            };
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                dark: T('--brand-dark'),
+                                card: T('--brand-card'),
+                                cardHover: T('--brand-card-hover'),
+                                accent: T('--brand-accent'),
+                                accentLight: T('--brand-accent-light'),
+                                cream: T('--brand-cream'),
+                                muted: T('--brand-muted'),
+                                border: T('--brand-border')
+                            }
+                        },
+                        fontFamily: {
+                            sans: F('--font-sans'),
+                            serif: F('--font-serif')
+                        }
+                    }
+                }
+            };
+        })();
+    </script>
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: wordmark + live clock (HH:MM:SS, 1s tick). -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-cash-register text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Cashier</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Counter terminal · <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
+            </p>
+        </div>
+    </header>
+
+    <!-- Code field lives OUTSIDE #app so repainting the board never destroys the
+         field the cashier is typing into. -->
+    <div id="codefield" class="max-w-7xl w-full mx-auto px-4"></div>
+
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <!-- VOID ACTION — DELIBERATELY OMITTED (by design, not by missing data).
+         listActivePending() DOES hand back order_id (sql/02_functions.sql), so a
+         Void button could be wired here — it isn't, because void_order is a
+         manager decision, not a cashier one: the cashier's only write is
+         confirm_payment. The owner dashboard owns voiding. Nothing on this page
+         calls voidOrder, and no id is ever invented here. -->
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-cash-register text-brand-accent mr-1"></i>
+            Sleepless Cafe · Cashier · signed in as <span id="staffid" class="font-mono text-brand-cream">nobody</span> · prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+    <!-- ========================= CASHIER APP (ES module) =====================
+     Imports from './assets/api.js' (folder prefix required — this page sits at
+     repo root); api.js imports config.js
+     itself, so config.js is not imported here. Orders are RLS-denied to anon, so this page signs in
+     first and hands the access token to setSessionToken. The password is never
+     rendered, logged, or echoed anywhere — only the signed-in email is shown.
+     ====================================================================== -->
+<script type="module">
+    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
+
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
+       Must run before any api call. Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        if (!url && !key) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+
+    /* --- state ----------------------------------------------------------- */
+    let rows = [];              // live unpaid claims from listActivePending()
+    let lookup = null;          // {kind, ...} — current code-lookup view
+    let toast = null;           // {msg, until} — transient success line
+    let boardError = null;      // error code from the last board poll
+    let staffEmail = null;      // email of the signed-in staff session
+
+    /* Codes are STRINGS end-to-end: leading zeros are significant, so a code is
+       never passed through Number(). */
+    const CODE_RE = /^[0-9]{5}$/;
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy: one human line per code, never a stack trace, never the
+         raw code string. ORDER_EXPIRED wording is contractual, verbatim. */
+    const GATE_COPY = "Staff sign-in required — add ?email=&password= to this URL once.";
+    const AUTH_COPY = "That staff account wasn't accepted. Check the credentials in the URL — nothing was stored.";
+    const BAD_SHAPE = "That's not a 5-digit code.";
+    const NOT_FOUND = "Wrong code, or that order's time is up.";
+    const PAID_COPY = "Paid — sent to the kitchen.";
+    const ERR_COPY = {
+        ORDER_EXPIRED: "This order's time is up, please place a new one",
+        NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
+        ORDER_NOT_FOUND: NOT_FOUND,
+        NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
+        HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening let the barista know.",
+    };
+
+    /* --- live clock: HH:MM:SS on a 1s tick ------------------------------- */
+    const pad = (n) => String(n).padStart(2, '0');
+    const clockEl = document.getElementById('clock');
+    function tick() {
+        const d = new Date();
+        clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    /* --- auth gate card (no session = no board) -------------------------- */
+    function renderAuthGate(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 text-center my-6">
+               <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing on this board loads until a staff session exists — orders are invisible to anonymous visitors.</p>
+             </div>`;
+    }
+
+    /* --- board rows ------------------------------------------------------ */
+    function renderRow(r) {
+        const code = String(r.code ?? '');
+        const secs = Math.max(0, Math.floor(Number(r.seconds_remaining) || 0));
+        /* < 2 min left: the next click may already be past the deadline, so the
+           row wears the semantic status pair from assets/app.css and the cell
+           says LAST CALL before the countdown. */
+        const last = secs < 120;
+        const timeCell = last
+            ? `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap">LAST CALL ${fmtCountdown(secs)}</span>`
+            : `<span class="status-live rounded-md px-2 py-1 whitespace-nowrap">${fmtCountdown(secs)}</span>`;
+        return `<tr class="border-b border-brand-border/40${last ? ' status-lastcall' : ''}" data-code="${esc(code)}">
+                <td class="font-mono text-brand-cream tracking-widest py-2 px-3 whitespace-nowrap">${esc(code)}</td>
+                <td class="text-brand-cream py-2 px-3">${esc(r.customer_name ?? '')}</td>
+                <td class="font-mono text-brand-muted py-2 px-3 whitespace-nowrap">${fmtTime(r.created_at)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${timeCell}</td>
+                <td class="font-mono text-center py-2 px-3">${Number(r.items_count ?? 0)}</td>
+                <td class="font-mono text-brand-accentLight text-right py-2 px-3 whitespace-nowrap">${fmtPeso(r.total_amount)}</td>
+              </tr>`;
+    }
+
+    function renderBoard() {
+        const head = `<tr class="bg-brand-card/60 text-brand-muted text-xs uppercase tracking-wider py-2">
+                <th class="px-3 text-left">Code</th>
+                <th class="px-3 text-left">Customer Name</th>
+                <th class="px-3 text-left">Time Created</th>
+                <th class="px-3 text-left">Time Remaining</th>
+                <th class="px-3 text-center">No. of Items/Drinks</th>
+                <th class="px-3 text-right">Total Amount</th>
+              </tr>`;
+        const body = rows.map(renderRow).join('');
+        const empty = `<tr><td class="text-brand-muted text-sm py-3 px-3 text-center" colspan="6">No unpaid claims on the board right now.</td></tr>`;
+        const note = boardError
+            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
+            : '';
+        return `<div class="glass-card rounded-xl p-4 mt-4 overflow-x-auto">
+                <table class="w-full border-collapse">
+                  <tbody>${head}${body || empty}</tbody>
+                </table>
+                ${note}
+              </div>`;
+    }
+
+    /* --- lookup views ---------------------------------------------------- */
+    function renderFound() {
+        const l = lookup;
+        const secs = Math.max(0, Math.floor(Number(l.seconds_remaining) || 0));
+        const status = secs < 120 ? 'status-lastcall' : 'status-live';
+        return `<div class="glass-card rounded-xl p-6 my-4" data-order-card data-code="${esc(l.code)}">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Claim on the board</p>
+                <div class="font-mono text-brand-accentLight text-4xl tracking-widest" style="letter-spacing:0.3em">${esc(l.code)}</div>
+                <p class="text-brand-cream text-lg font-serif mt-2">${esc(l.name)}</p>
+                <div class="flex items-center gap-3 mt-3 flex-wrap">
+                  <span class="text-brand-muted text-xs uppercase tracking-wider">Created ${fmtTime(l.created_at)}</span>
+                  <span class="${status} rounded-md px-2 py-1 whitespace-nowrap">${fmtCountdown(l.seconds_remaining)}</span>
+                  <span class="text-brand-muted text-xs uppercase tracking-wider">${Number(l.items_count ?? 0)} item${Number(l.items_count ?? 0) === 1 ? '' : 's'}</span>
+                  <span class="font-mono text-brand-accentLight">${fmtPeso(l.total_amount)}</span>
+                </div>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-confirm>Confirm Payment</button>
+              </div>`;
+    }
+
+    function renderLookup() {
+        if (!lookup) return '';
+        if (lookup.kind === 'found') return renderFound();
+        const copy = lookup.kind === 'badshape' ? BAD_SHAPE
+                   : lookup.kind === 'notfound' ? NOT_FOUND
+                   : ERR_COPY[lookup.copy] ?? ERR_COPY.HTTP;
+        /* Wrong code and expired claim share one copy on purpose — the server
+           cannot tell them apart either, and this page must not hint which. */
+        return `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+              </div>`;
+    }
+
+    function renderToast() {
+        if (!toast || Date.now() >= toast.until) return '';
+        return `<div class="glass-card rounded-xl p-3 my-3 text-center">
+                <p class="text-brand-accentLight text-sm font-semibold">${toast.msg}</p>
+              </div>`;
+    }
+
+    function paint() {
+        document.getElementById('app').innerHTML = renderLookup() + renderToast() + renderBoard();
+    }
+
+    /* --- board refresh: listActivePending() purges expired rows server-side,
+         so a claim that hit 60 minutes simply stops being returned and its row
+         disappears with no ghost left behind. ---------------------------- */
+    async function refreshBoard() {
+        const res = await listActivePending();
+        if (!res.success) { boardError = res.error?.code ?? 'HTTP'; return; }
+        boardError = null;
+        rows = (res.data || []).filter((r) => Number(r.seconds_remaining) > 0);
+        rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))); // newest first
+    }
+
+    /* --- code lookup: shape-checked client-side, so a mistyped scan never
+         reaches the server. --------------------------------------------- */
+    async function lookupCode(raw) {
+        const code = String(raw ?? '').trim();
+        if (!CODE_RE.test(code)) {
+            lookup = { kind: 'badshape' };
+            return paint();
+        }
+        const res = await getOrderByCode(code);
+        if (!res.success) {
+            lookup = { kind: 'error', copy: res.error?.code ?? 'HTTP' };
+            if (res.error?.code === 'ORDER_NOT_FOUND') lookup = { kind: 'notfound' };
+            return paint();
+        }
+        const d = res.data || {};
+        lookup = {
+            kind: 'found',
+            code: String(d.code ?? code),
+            name: d.customer_name ?? '',
+            created_at: d.created_at,
+            seconds_remaining: d.seconds_remaining,
+            items_count: d.items_count,
+            total_amount: d.total_amount,
+        };
+        paint();
+    }
+
+    /* --- payment: on success the row must already be gone when we repaint,
+         so the board is re-read before painting. ------------------------ */
+    async function pay(code) {
+        const res = await confirmPayment(code);
+        if (res.success) {
+            lookup = null;
+            toast = { msg: PAID_COPY, until: Date.now() + 6000 };
+        } else {
+            lookup = { kind: 'error', copy: res.error?.code ?? 'HTTP' };
+        }
+        await refreshBoard();
+        paint();
+    }
+
+    /* --- event wiring (delegated, so repainting cards keeps handlers) ---- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.dataset.confirm !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card) void pay(card.dataset.code);
+        }
+        else if (t.dataset.lookup !== undefined) {
+            const input = document.querySelector('[data-code-input]');
+            void lookupCode(input ? input.value : '');
+        }
+    });
+
+    /* --- code input: big, monospace, typed or scanned -------------------- */
+    function openCodeInput() {
+        const host = document.getElementById('codefield');
+        host.innerHTML =
+            `<div class="glass-card rounded-xl p-4 my-4">
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Claim code — type or scan</label>
+               <input type="text" placeholder="5-digit code" spellcheck="false" autocomplete="off"
+                      class="font-mono text-3xl tracking-widest rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
+                      data-code-input></div>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-lookup>Look Up</button>`;
+        const input = host.querySelector('[data-code-input]');
+        /* `change` on a bare input only fires on commit, so the Look Up button
+           is the reliable path; the listener stays as a convenience. */
+        input.addEventListener('change', () => void lookupCode(input.value));
+    }
+
+    /* --- boot: auth gate first, then clock-driven board polling every 5s -- */
+    (async function () {
+        const q = new URLSearchParams(location.search);
+        let email = q.get('email'), password = q.get('password');
+        if (!email || !password) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+            if (saved && saved.email && saved.password) { email = saved.email; password = saved.password; }
+        }
+        if (!email || !password) { renderAuthGate(GATE_COPY); return; }
+
+        const res = await signIn(email, password);
+        if (!res.success) {
+            renderAuthGate(res.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : AUTH_COPY);
+            return;
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        staffEmail = d?.user?.email || email;
+        /* only the email is surfaced — the password is never rendered */
+        document.getElementById('staffid').textContent = staffEmail;
+
+        openCodeInput();
+        await refreshBoard();
+        paint();
+        setInterval(async () => { await refreshBoard(); paint(); }, 5000);
+    })();
+    </script>
+</body>
+</html>
