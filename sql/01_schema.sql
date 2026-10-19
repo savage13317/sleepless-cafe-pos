@@ -54,10 +54,10 @@ CREATE TABLE menu_items
 );
 
 -- ON DELETE RESTRICT is the PostgreSQL "reject" behaviour: deleting a
-category that still has menu_items pointing at it raises an error rather than
-silently orphaning them. (ON DELETE REFERENCE would be the opposite - it skips
-the check and leaves a dangling FK - so RESTRICT is deliberate here.) delete_category
-in sql/02_functions.sql must reassign or delete the items first, then drop the category.
+-- category that still has menu_items pointing at it raises an error rather than
+-- silently orphaning them. (ON DELETE REFERENCE would be the opposite - it skips
+-- the check and leaves a dangling FK - so RESTRICT is deliberate here.) delete_category
+-- in sql/02_functions.sql must reassign or delete the items first, then drop the category.
 
 -- ----------------------------------------------------------------------------
 -- orders: one row per claim. code is the human-readable 5-digit claim code.
