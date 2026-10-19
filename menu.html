@@ -95,13 +95,14 @@
      Imports from './assets/api.js' (the folder prefix is required — this page
      sits at repo root, so a bare './api.js' would 404); api.js imports config.js
      itself, so config.js is not imported here.
-     The config bootstrap below runs before any api call.
+     The config bootstrap lives in a CLASSIC script ABOVE this module: config.js
+     resolves CONFIG at its own module-init time, which runs before this page's
+     module body, so a bootstrap inside the module would arrive too late.
      ====================================================================== -->
-<script type="module">
-    import { getCategories, getMenu, createOrder, fmtPeso } from './assets/api.js';
-
+<script>
     /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
-       Must run before any api call. Values are never printed or echoed. */
+       Classic (non-module) on purpose: must run before config.js is evaluated.
+       Values are never printed or echoed. */
     (function () {
         const q = new URLSearchParams(location.search);
         const url = q.get('sburl'), key = q.get('sbkey');
@@ -112,6 +113,10 @@
         if (key) cfg.sbKey = key;
         localStorage.setItem('sl_config', JSON.stringify(cfg));
     })();
+</script>
+
+<script type="module">
+    import { getCategories, getMenu, createOrder, fmtPeso } from './assets/api.js';
 
     /* --- state ----------------------------------------------------------- */
     let categories = [];            // [{id,name,display_order}]

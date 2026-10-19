@@ -62,14 +62,19 @@ export function fmtCountdown(seconds) {
     : `${p(Math.floor(s / 60))}:${p(s % 60)}`;             // mm:ss
 }
 
-/* --- core RPC: POST /rest/v1/<fn>, body = named args ---------------------- */
+/* --- core RPC: POST /rest/v1/rpc/<fn>, body = named args ----------------- */
+/* FIX: this project's API gateway exposes SQL functions ONLY under the /rpc/
+   prefix. Bare /rest/v1/<name> is resolved against tables/views and answers
+   PGRST205 "Could not find the table 'public.<fn>'" even though PostgREST's
+   schema cache reports the RPCs as loaded. Tables (getRows, below) keep the
+   bare form - those DO resolve.                                           */
 /* Named-arg keys match the SQL parameter names exactly:
    customer_name, items, claim_code, order_id.                        */
 
 async function callSql(fn, args) {
   let res;
   try {
-    res = await fetch(`${CONFIG.sbUrl}/rest/v1/${fn}`, {
+    res = await fetch(`${CONFIG.sbUrl}/rest/v1/rpc/${fn}`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify(args || {}),

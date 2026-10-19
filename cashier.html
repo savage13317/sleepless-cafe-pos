@@ -106,11 +106,15 @@
      first and hands the access token to setSessionToken. The password is never
      rendered, logged, or echoed anywhere — only the signed-in email is shown.
      ====================================================================== -->
-<script type="module">
-    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
-
+<!-- ============================ CONFIG BOOTSTRAP (classic) ===================
+     Classic (non-module) on purpose: a page's module body runs AFTER its
+     imported modules, so a bootstrap inside the module body would execute
+     after config.js already resolved CONFIG from localStorage. Values are
+     never printed or echoed.                                                    -->
+<script>
     /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
-       Must run before any api call. Values are never printed or echoed. */
+       Classic (non-module) on purpose: must run before config.js is evaluated.
+       Values are never printed or echoed. */
     (function () {
         const q = new URLSearchParams(location.search);
         const url = q.get('sburl'), key = q.get('sbkey');
@@ -121,6 +125,10 @@
         if (key) cfg.sbKey = key;
         localStorage.setItem('sl_config', JSON.stringify(cfg));
     })();
+</script>
+
+<script type="module">
+    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
 
     /* --- state ----------------------------------------------------------- */
     let rows = [];              // live unpaid claims from listActivePending()
