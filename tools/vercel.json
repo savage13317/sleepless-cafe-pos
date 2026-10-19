@@ -1,0 +1,53 @@
+{
+  "headers": [
+    {
+      "source": "/assets/config.generated.js",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      }
+    },
+    {
+      "source": "/cashier.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      }
+    },
+    {
+      "source": "/kitchen.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      }
+    },
+    {
+      "source": "/owner.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow"
+      }
+    },
+    {
+      "source": "/assets/**",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
+    },
+    {
+      "source": "/*.html",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      }
+    },
+    {
+      "source": "/",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      }
+    },
+    {
+      "source": "/**",
+      "headers": {
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "same-origin"
+      }
+    }
+  ]
+}
