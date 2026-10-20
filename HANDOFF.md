@@ -5,7 +5,9 @@
 conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
 host** — Gate A green except the manual phone run — the Gate A audit fixed three public-host defects
 (commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
-`2342c83` + `eab2481` + `1696a96`) · **Phase 8 (Vercel go-live) is next and parked.**
+`2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
+no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
+payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 (Vercel go-live) is next and parked.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -215,8 +217,12 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   cannot be deleted because a paid order still references it. `categories` **4** — category UUIDs
   `11111111-1111-1111-8333-000000000001..4`; live `display_order` is **0-based** (Coffee 0, Non-Coffee 1,
   Pastries 2, Desserts 3) while `sql/05_seed.sql` is 1-based, so a re-seed and the live board differ by one.
-  `orders` **7 completed** (revenue ₱1,165.00, avg ₱166.43) and **0 `pending_payment`** — every R9 probe
-  (`43450` force-expired, `84400`, `97314`) was purged by the TTL sweep or voided, which is the designed
+  `orders` **9 completed** (revenue ₱3,765.00, avg ₱418.33) and **0 `pending_payment`**, `order_items` **14**
+  (re-probed live 2026-10-20 after the R10 pass). Codes in `orders`, oldest first: `63242, 02342, 13341,
+  21574, 85063, 33667, 96405` all `served`, plus `87823` and `34865` `paid` — the two `paid` rows are the R10
+  pass (the human's own claim ₱1,550.00 and my probe claim ₱1,050.00), which is why revenue moved ₱1,165.00 →
+  ₱3,765.00 over 9 orders. Every other R9/R10 probe (`43450`, `84400`, `97314`, `48170`, `30218`, and the
+  duplicate `09031`) is gone from `orders` entirely — purged by the TTL sweep or voided, which is the designed
   behaviour, not a bug. The claim window is now **30 minutes** (`sql/01_schema.sql:74`
   `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'`); proof from a live order: created
   `06:16:17.411762Z`, `expires_at` `06:46:17.411762Z` — exactly 30 min, `seconds_remaining` 1786.
@@ -232,10 +238,12 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
   The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
   both hosts boot with no params at all.
-- Git: `origin/main == a7ab4bd` (`docs(phase-7)` — pushed) and `main == f637cc8` (`fix(phase-5): delete_category
-  refuses categories referenced by past orders`) — **two local commits ahead, unpushed**: `f9194aa feat(ttl)`
-  (claim window 60 → 30 min) then `f637cc8`. Working tree clean except the docs pass that added this section.
-  Standing rule: the agent never pushes on its own — a push needs an explicit human request.
+- Git: **`main == origin/main`** — the human asked for a push this turn, so the three R10 commits on top of
+  `a7ab4bd` (`7916a0d feat(phase-7)` editable claim, `ce3b24e fix(phase-7)` cart qty / double-tap guard / board
+  viewport, plus the `docs(phase-7)` commit that carries this section) are now on the public branch. GitHub Pages
+  rebuilds and serves the R10 tree; `assets/app.css` is served with `Cache-Control: max-age=600`, so a returning
+  visitor can keep the previous stylesheet for up to ten minutes. Standing rule unchanged: a push needs an
+  explicit human request, and the agent never pushes on its own.
 
 ---
 
@@ -244,22 +252,22 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | File | State |
 | --- | --- |
 | `sql/01_schema.sql` | 6,899 B. 4 tables, 6 indexes incl. partial `orders_live_pending_idx`. No RLS enablement anywhere (by design). **Changed 2026-10-20 (`f9194aa`):** line 74 `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'` (was 60) and the header comment at line 8. Live DB moved to match - see sec 8.1. |
-| `sql/02_functions.sql` | **Fixed, 40,035 B, applied live, call-tested.** 16 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. **R9 (`f637cc8`):** `delete_category` gained the `MENU_ITEM_IN_USE` pre-check plus a nested `SQLSTATE '23503'` net - see sec 8.2. |
-| `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 4× `ENABLE ROW LEVEL SECURITY` first, then 10 policy pairs each preceded by `DROP POLICY IF EXISTS`. |
+| `sql/02_functions.sql` | **Fixed, 49,311 B, applied live, call-tested.** 19 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. **R9 (`f637cc8`):** `delete_category` gained the `MENU_ITEM_IN_USE` pre-check plus a nested `SQLSTATE '23503'` net - see sec 8.2. |
+| `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 11,531 B. 4× `ENABLE ROW LEVEL SECURITY` first, then 11 policy pairs each preceded by `DROP POLICY IF EXISTS`. **R10 (`7916a0d`):** `orders_staff_update` WITH CHECK extended to two arms (unpaid-with-`paid_at IS NULL` / paid-with-`paid_at IS NOT NULL`) so a cashier can reprice a live claim, and `order_items_staff_write` (auth, FOR ALL, `WITH CHECK quantity >= 1 AND subtotal = unit_price * quantity`) added — see sec 9.4. |
 | `sql/04_realtime.sql` | **Corrected + applied live.** Publication claim replaced with the verified membership+delivery contract; executable `alter publication supabase_realtime add table orders;` added; v4 wire block replaced with the 2.118.0 `.on(...)` surface. |
 | `sql/05_seed.sql` | Applied live, idempotent (`ON CONFLICT (id) DO NOTHING`), no DELETE/TRUNCATE. |
-| `assets/api.js` | 12,895 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 16 fns; `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
+| `assets/api.js` | 14,761 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 19 fns (incl. the three claim-edit wrappers `getClaimView`/`setClaimItemQty`/`addClaimItem`); `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
 | `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`) and 2026-10-20 (`f9194aa`), 2,044 B.** Line 31 now carries `ttlMinutes: 30,` - the client mirror of the DB column default (they must change as a pair, sec 8.1). Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
-| `assets/app.css` | **8,197 B, extended 2026-10-24 three times (`2342c83`, `eab2481`, `1696a96`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity), then `.cart-line` + `.cart-price` (sec 4 D4) which line the amount and the steppers down the cart. Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
-| `menu.html` | **27,838 B, fixed four times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
-| `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
+| `assets/app.css` | **9,662 B, extended four times (`2342c83`, `eab2481`, `1696a96`, `ce3b24e`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity), then `.cart-line` + `.cart-price` (sec 4 D4) which line the amount and the steppers down the cart. Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
+| `menu.html` | **29,158 B, fixed five times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`, `ce3b24e`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
+| `cashier.html` | **30,555 B, reworked in the R10 pass (`7916a0d` + `ce3b24e`).** Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. New: the board is server-sorted and wrapped in a scrolling viewport (sec 9.3), and a looked-up claim renders as a cart-like editable card — per-line `+` / qty / `−` / `Remove` plus an "Add to this claim" size-chip panel — before Confirm Payment is allowed (sec 9.4). `claimBusy` guards every edit and the payment so one tap cannot race the next. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
 | `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
-| `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. |
+| `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. **R10:** `getOrderByCode` row now shows the `order_id` + `items[]` shape (its body IS `claim_view`), three RPC rows added (`getClaimView`/`setClaimItemQty`/`addClaimItem`), and the code table gained `CLAIM_NOT_OPEN`/`INVALID_QTY`/`LINE_NOT_FOUND`/`LAST_LINE_ONLY` with the verbatim cashier copy. |
 | `assets/ui.js` | **Does not exist** and is referenced by no page (only `MASTER_PLAN.md:99`). Deliberate deviation: each page ships its own inline UI, keeping dispatches inside the 1–3 file budget. Do not create dead code. |
 | `Sleepless.html` | Design reference only, never edited. Its dangling `staff.html` link at `:237` is out of scope. |
 
@@ -506,9 +514,13 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-f637cc8 fix(phase-5): delete_category refuses categories referenced by past orders   <- HEAD (LOCAL, unpushed)
-f9194aa feat(ttl): claim window 60 -> 30 minutes across backend, client copy and docs   <- also LOCAL
-a7ab4bd docs(phase-7): record the cart column fix, name guard, centered success copy and footer credit  <- origin/main
+HEAD  docs(phase-7): record the R10 pass - cart qty between steppers, double-order guard, board sort + viewport, editable claim   <- HEAD, pushed this turn
+ce3b24e fix(phase-7): put the cart quantity between the steppers, refuse a double tap, cap the unpaid board
+7916a0d feat(phase-7): make a looked-up claim editable before payment
+6d32b9d docs(phase-5-7): record the R9 full-system test pass - TTL 30 min and the delete_category refusal
+f637cc8 fix(phase-5): delete_category refuses categories referenced by past orders
+f9194aa feat(ttl): claim window 60 -> 30 minutes across backend, client copy and docs
+a7ab4bd docs(phase-7): record the cart column fix, name guard, centered success copy and footer credit
 1696a96 fix(phase-7): align cart columns, guard the name field, credit the footer
 d80b3e6 docs(phase-7): record the checkout restructure - name above cart, one action button
 eab2481 fix(phase-7): name field above the cart + one place-order action
@@ -519,10 +531,10 @@ bb58747 docs(phase-7): record the Gate A audit - 4 defects found, 3 fixed
 b62fd2f fix(phase-7): make Pages usable for a first-time visitor
 af1f4de docs: record Phase 7 completion - Gate A met live
 ```
-`main` is **two commits ahead of `origin/main`** (`a7ab4bd..f637cc8` unpushed) — the R9 pass was not asked to
-be pushed, so GitHub Pages still serves the `a7ab4bd` tree. A push needs an explicit human request; until then
-the TTL and the `delete_category` refusal exist only in the local tree plus the live DB (both were applied
-directly to the project, so the deployed site will show the new behaviour once pushed).
+`main == origin/main` after this turn: the human asked for a push, so `a7ab4bd..HEAD` — the TTL move, the
+`delete_category` refusal, the R9 docs, the two R10 code commits and this docs commit — is on the public branch,
+and GitHub Pages serves the R10 tree once its build finishes. Standing rule for future sessions: the agent does
+not push on its own — a push needs an explicit human request.
 `main` **== `origin/main`** — the human pushed `7ea5cb7..cbca447` on 2026-10-20. GitHub Pages rebuilt
 and the live `owner.html` now carries the phase-5 bootstrap fix (`owneremails` 2 hits, `!emails` 1,
 `ownerEmails` 3, `split` 3 — matching `owner.html:97–115` + the gate at `:652`), so the `?owneremails=`
@@ -614,3 +626,128 @@ test deletion against a category that IS referenced (Coffee), so the refusal pat
 Phase 8 (Vercel) remains parked by the human's earlier decision; the two local commits above are unpushed, so
 GitHub Pages still serves `a7ab4bd`. `assets/api.js` needed no change for `MENU_ITEM_IN_USE` — the envelope
 passes through `copyFor()` unchanged.
+
+---
+
+## 9. R10 - customer + cashier UX pass (2026-10-20, human request "5 items, correct everything fast but accurately")
+
+The human reported five things: the cart quantity should sit between the `+` and `-`; ordering produced a
+double-click glitch with **two identical claims recorded** (screenshots: `87823 CJ` and `09031 CJ`, both 15:55,
+both ₱1,550.00 / 3 items); the unpaid board should show about ten rows with scrolling after that and be sorted
+alphabetically by customer name; and a looked-up claim should look like the customer cart, so a quantity can be
+adjusted, a line deleted, or an item added before payment is confirmed. All five are done - backend in `7916a0d`,
+frontend in `ce3b24e`.
+
+### 9.1 Cart quantity between the steppers (commit `ce3b24e`)
+
+`renderCart()` emits the line as name/size, amount, `+`, **qty**, `-`, `Remove` - the number now lives BETWEEN
+the two buttons instead of trailing the item name. `assets/app.css` `.cart-line` gained a dedicated centre track
+for it: `grid-template-columns: 1fr minmax(6.5rem, auto) auto minmax(2.25rem, auto) auto auto` with
+`.cart-qty { justify-self: center; font-weight: 700; }`, so the number and both steppers line up on every line
+regardless of item-name length. Hint copy: "The number between + and - is how many you have. Tap + or - to
+change it, Remove to drop the line."
+
+Live DOM proof: children `SPAN "Caramel Latte · Regular"`, `SPAN ₱140.00`, `BUTTON +`, `SPAN 1`, `BUTTON -`,
+`BUTTON Remove`; computed `gridTemplateColumns: 402.39px 104px 40px 36px 40px 63.6px` - the qty track is exactly
+`minmax(2.25rem, auto)` = 36 px, so the two 40 px buttons share a column.
+
+### 9.2 The double-order glitch (commit `ce3b24e`)
+
+Root cause: `checkout()` cleared the cart only AFTER `await createOrder(...)`, so a second tap on the same button
+(a double click, or a tap-and-a-half) still saw a non-empty cart and fired a second identical `create_order` -
+two claims, two codes, same items. That is exactly the pair in the screenshots.
+
+Two guards, both **synchronous** (no `await` between the check and the clear, which is what makes them raceproof):
+
+| Guard | What it does |
+| --- | --- |
+| `let placing = false;` (module level) | `runCheckout()` returns immediately if `placing` is already true and clears it only after the `await`, so a second click during an in-flight order does nothing at all. |
+| `const snapshot = cart; cart = new Map();` | Runs BEFORE the request, so the cart is empty the moment the RPC starts. On a failed RPC `cart = snapshot;` puts the lines back, so a refusal is still undoable. |
+
+Proof: with the letters-only name "Double Tapper", two clicks fired in the same tick produced exactly ONE claim
+(code `48170`), cart 0 lines, and the staff REST board showed `count = 1` for that name. (An earlier attempt named
+"R10 Double Tap" was legitimately rejected by the R8 letters guard because of the digits - not a regression.)
+
+### 9.3 Unpaid board: alphabetical + scrolling viewport (commits `7916a0d` + `ce3b24e`)
+
+| Side | Change |
+| --- | --- |
+| Server order | `sql/02_functions.sql:270` - `list_active_pending` now orders `lower(o.customer_name) ASC, o.created_at DESC` (was `created_at DESC` alone). The order is the server's, so every terminal agrees. |
+| Client | `cashier.html` `refreshBoard()` had its client-side sort REMOVED - re-sorting locally would fight the server and reshuffle rows on every paint. |
+| Viewport | `assets/app.css` `.board-scroll { max-height: 23.5rem; overflow-y: auto; overscroll-behavior: contain; }` wraps the table. Rows measure 34 px, so 11 rows = 374 px = 23.5 rem: about ten claims visible, the rest reached by scrolling. `overscroll-behavior: contain` keeps a board flick from scrolling the whole page. |
+| Copy | `renderBoard()` adds a note only when `rows.length > 10`: "All N unpaid claims are listed - scroll the board to reach the ones past the first screen." |
+| Print | `@media print` releases the cap (`max-height: none !important; overflow: visible !important;`) so a printed board is never truncated. |
+
+Verified: `.board-scroll` computed `overflow-y: auto`, `overscroll-behavior: contain`, `max-height: 376 px`
+(23.5 rem) after a page reload - the integrated browser memory-caches `assets/app.css`, so a CSS edit is
+invisible until the page is reloaded; `max-height` read 432 px before the reload. Board row height measured 34 px.
+**Not yet exercised:** the >10 note itself - seeding 11+ live claims would spam the board for a full 30-minute
+window, so that branch is verified structurally (`rows.length > 10` + the viewport CSS), not visually.
+
+### 9.4 A looked-up claim is editable before payment (commit `7916a0d`)
+
+Three functions added to `sql/02_functions.sql` (19 total) and applied live:
+
+| Fn | Contract |
+| --- | --- |
+| `claim_view(p_order_id uuid)` :178 | The single definition of "open claim": returns the order plus its `items[]` (`item_id` included so a client can name a line) sorted `item_name ASC, size ASC` inside `jsonb_agg`, only when `status = 'pending_payment' AND expires_at >= now()`. SQL NULL otherwise - never an envelope. |
+| `set_claim_item_qty(p_order_id, p_item_id, p_quantity)` :433 | `quantity = 0` deletes the line, otherwise rewrites `quantity` and `subtotal = unit_price * quantity`; `total_amount` is re-summed from the lines and written back. Refusals: `CLAIM_NOT_OPEN` (:442 and again :467 - a claim can run out of time mid-edit), `INVALID_QTY` (:445, 0..999), `LINE_NOT_FOUND` (:448), `LAST_LINE_ONLY` (:452). |
+| `add_claim_item(p_order_id, p_menu_item_id, p_size, p_quantity)` :482 | Prices itself from `menu_items.sizes_and_prices` - the caller never sends a price, so a cashier cannot invent one. Merges into an existing same (item, size) line with `LEAST(999, quantity + add)`, else inserts with `item_name` copied from the menu. Refusals: `CLAIM_NOT_OPEN` (:494, :525), `INVALID_QTY` (:498), `MENU_ITEM_UNAVAILABLE` (:503), `INVALID_SIZE` (:508). |
+
+`get_order_by_code` was rewritten to resolve the open id and then read `claim_view`, so the lookup payload and
+the edit payload are the same shape (`ORDER_NOT_FOUND` when either is NULL).
+
+Two RLS changes in `sql/03_rls.sql` (now 11 policy pairs, applied live):
+
+- `orders_staff_update` WITH CHECK extended to two arms - a `pending_payment` row with `paid_at IS NULL`, or a
+  `paid`/`preparing`/`served` row with `paid_at IS NOT NULL`. Needed because a claim edit reprices the row while
+  it is still unpaid; it is not a loophole, the row still cannot cross the payment boundary in one write.
+- `order_items_staff_write` (auth, FOR ALL) added: `WITH CHECK ( quantity >= 1 AND subtotal = unit_price * quantity )`.
+  Dropping a line is a DELETE, and a `WITH CHECK` cannot restate the claim-open fence because that would require
+  reading `orders` - the fence lives in the functions, which is where the only callers come from.
+
+`LAST_LINE_ONLY` is deliberate: an empty claim is not an order, so "delete everything" is a void, and voiding
+remains an owner decision. The cashier's writes are `confirm_payment` plus the pre-payment edits; nothing in
+`cashier.html` calls `voidOrder`. The stale "VOID ACTION - DELIBERATELY OMITTED" comment was rewritten to say
+exactly that, so the rationale survives the code.
+
+Wire proof (staff JWT, RLS-faithful REST path): board alphabetical (CJ before "R10 Tester"); `get_order_by_code`
+returned 2 lines (Butter Croissant/Single x1 @95 = 95, Long Black/Regular x2 @120 = 240, total 335.00);
+`set_claim_item_qty` -> 3 gave 455.00; qty 0 on the croissant gave 360.00 over 1 line; qty 0 on the last line
+returned `LAST_LINE_ONLY`; `add_claim_item` Espresso/Single x2 gave 540.00 over 2 lines with the price derived
+server-side.
+
+### 9.5 Browser evidence (integrated browser on `localhost:8731`, no headless automation)
+
+- Cashier claim card for `34865` carried `data-order-id`, lines sorted by name, the line "On this claim - tap +
+  or - beside the number, Remove to drop a line", and an "Add to this claim - tap a size" panel of 25 size chips
+  over the 12 available items. UI edits drove ₱875.00 -> ₱1,055.00 (Basque Slice qty 4) -> ₱960.00 over 2 lines
+  (Remove the Butter Croissant) -> ₱1,050.00 over 3 lines (Espresso Single chip), and the board row followed each
+  edit. Confirm Payment printed "Paid - sent to the kitchen." and the row left the board.
+- `LAST_LINE_ONLY` rendered as human copy above the "On this claim" line on claim `48170`, claim unchanged at ₱140.00.
+- Cleanup: `30218` and `48170` voided with the staff JWT; the cashier then read "No unpaid claims on the board
+  right now." Final DB probe: `live 0`, `completed 9`, `revenue 3765.00`, `order_items 14`, codes
+  `63242, 02342, 13341, 21574, 85063, 33667, 96405` served + `87823` and `34865` paid.
+
+### 9.6 Remaining, not yet done (as of this commit)
+
+- **Phase 8 (Vercel go-live) - untouched.** Still parked: no Vercel account or domain exists, and the manual phone
+  run of Gate A has never been done. `tools/inject-config.mjs` and `tools/vercel.json` exist but have never been
+  exercised.
+- **The >10-row scroll branch is unverified visually** (see 9.3) - it needs 11+ live claims, which would sit on the
+  board for a full 30-minute window.
+- **R10 evidence is localhost-only.** Nothing in this pass was re-checked on the public Pages host; after this
+  push the R10 tree ships, but `assets/app.css` is served with `Cache-Control: max-age=600`, so a returning
+  visitor can keep the old stylesheet for up to ten minutes.
+- **Scroll only, no pagination.** The request said "up to 10 maybe?", so the board caps the viewport and lets the
+  cashier scroll; there is no next-page control and `list_active_pending` still returns every live claim.
+- **`cashier.html` imports `getClaimView` but never calls it** - the claim card is built from the `get_order_by_code`
+  payload, which is the same `claim_view` body. Harmless, but dead in the import list.
+- **Kitchen-side effect of a claim edit untested.** Edits happen before payment, so `kitchen_queue` (paid only)
+  never sees them; the paid card was confirmed to leave the unpaid board but was not re-checked on `kitchen.html`.
+- **Carried over, unchanged:** the hidden `Test Ristretto R9` item (`829e95a7-...`, undeletable while paid order
+  `96405` references it), the two `staff-probe` users with unrecorded passwords, the `index.html` TTL literals
+  (drift risk, sec 8.1), and the `uploadImage` comment that still says "PUT" while the code POSTs.
+- **Sales record now includes the human's own claims:** `87823` (₱1,550.00) and my `34865` (₱1,050.00) are paid,
+  which is why revenue moved ₱1,165.00 -> ₱3,765.00 over 9 completed orders (avg ₱418.33). The duplicate
+  `09031` is gone from `orders` entirely.

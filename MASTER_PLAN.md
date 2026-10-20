@@ -151,7 +151,19 @@ same visitor then reported four polish defects — cart amounts and `+`/`−` at
 (`justify-between` spreads leftover space between items; a plain `auto` grid still sizes per row, so the amount
 track needs `minmax(6.5rem, auto)` plus `justify-self: end`), the name field accepting `12312312`, the success
 instruction left-aligned in the card, and no footer credit. All four fixed in `menu.html` + `assets/app.css`;
-the server-side name CHECK was deliberately left as the looser backstop. **Next up: Phase 8 (Vercel go-live),
+the server-side name CHECK was deliberately left as the looser backstop.
+**R10 UX pass 2026-10-20 (`7916a0d` backend + `ce3b24e` frontend, still Phase 7 polish):** five more reported
+defects, all fixed. The cart quantity moved BETWEEN the `+` and `−` (a dedicated centre track in the `.cart-line`
+grid, so the steppers align on every line); the double-order glitch was a real race — `checkout()` cleared the cart
+only after `await createOrder`, so a double tap fired two identical `create_order` calls and recorded two claims
+— now closed by a synchronous `placing` flag plus a synchronous cart snapshot that is restored on a failed RPC;
+the unpaid board is ordered by the **server** (`list_active_pending` sorts `lower(customer_name) ASC, created_at
+DESC`, the client re-sort was removed) and capped to a `.board-scroll` viewport of about ten rows with the rest
+reached by scrolling; and a looked-up claim now renders as a cart-like editable card — `claim_view` /
+`set_claim_item_qty` / `add_claim_item` in `sql/02_functions.sql` (19 fns) plus `order_items_staff_write` and an
+extended `orders_staff_update` fence in `sql/03_rls.sql` (11 policy pairs) — so a cashier can change a quantity,
+drop a line, or add an item before Confirm Payment, with prices always derived from `menu_items` and an empty
+claim refused as `LAST_LINE_ONLY` because an empty claim is a void. **Next up: Phase 8 (Vercel go-live),
 parked until the phone run and a Vercel account/domain exist.**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
