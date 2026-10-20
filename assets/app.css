@@ -125,6 +125,25 @@ body {
   font-weight: 700;
 }
 
+/* --- Phase 7: cart line columns (menu.html) -----------------------------
+   The row was flex + justify-between, which spreads the leftover space BETWEEN
+   items — so the amount and the +/− buttons landed at a different x on every
+   line and nothing lined up down the cart. A plain `auto` grid does not fix it
+   either: every row is its own grid, so each row sized its own amount column
+   and the steppers drifted 7px. The amount column therefore gets a minimum
+   track and the number is pushed to the END of it, which puts every amount
+   flush at the same x and keeps the two stepper columns straight underneath.
+   The name column (1fr) absorbs the leftover. No brand color here — layout. */
+.cart-line {
+  display: grid;
+  grid-template-columns: 1fr minmax(6.5rem, auto) auto auto auto;
+  align-items: center;
+  column-gap: 0.75rem;
+}
+.cart-price {
+  justify-self: end;
+}
+
 /* --- Phase 3: cashier countdown status pair ------------------------------ */
 .status-live {
   color: var(--brand-accent-light);

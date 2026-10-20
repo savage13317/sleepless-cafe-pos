@@ -101,6 +101,9 @@
             <i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i>
             Sleepless Cafe · Prices in Philippine peso (₱)
         </p>
+        <p class="text-brand-muted text-xs">
+            © 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.
+        </p>
     </footer>
 
     <!-- ============================ MENU APP (ES module) =======================
@@ -243,10 +246,13 @@
                card stepper is clamped at 1 because it sets the quantity for the
                NEXT add. So every line carries its own controls, and the row
                carries the id+size identity the buttons need to find the entry. */
-            return `<div class="flex items-center justify-between gap-2 py-1 border-b border-brand-border/40"
+            /* cart-line, not flex: see assets/app.css. justify-between spread
+               the leftover space between items, so the amount and the steppers
+               drifted to a different x on every row. Grid columns line them up. */
+            return `<div class="cart-line py-1 border-b border-brand-border/40"
                     data-cart-line data-cart-id="${esc(r.itemId)}" data-cart-size="${esc(r.size)}">
                 <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)} · ×${r.qty}</span>
-                <span class="text-brand-accentLight font-mono text-sm mr-2">${fmtPeso(price * r.qty)}</span>
+                <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(price * r.qty)}</span>
                 <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="1">+</button>
                 <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="-1">−</button>
                 <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-cart-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
@@ -287,7 +293,7 @@
             <div class="font-mono text-brand-accentLight text-5xl sm:text-7xl font-bold tracking-widest my-2"
                  style="letter-spacing:0.35em">${esc(code)}</div>
             <p class="text-brand-cream text-lg font-serif mt-2">${name}</p>
-            <p class="text-brand-accentLight text-sm mt-3 max-w-prose">
+            <p class="text-brand-accentLight text-sm mt-3 mx-auto max-w-prose text-center">
                 Order Placed! Please present your code ${esc(code)} and your name (${name}) to the cashier within 60 minutes to process payment.
             </p>
             <p class="text-brand-muted text-xs mt-3">
@@ -317,11 +323,23 @@
        Checkout is tapped. A blank field is refused HERE, client-side, before any
        request is sent — an order can never be placed without a name, and the
        server's INVALID_CUSTOMER_NAME guard stays as the backstop. */
+    /* Letters only. A digit or a symbol is refused here, client-side, before any
+       request is sent — a customer cannot reach the counter as "12312312". Spaces
+       and apostrophes/hyphens stay legal because they are real in names (Mary Ann,
+       D'Angelo, Anne-Marie). One letter is not a name, so two letters minimum. */
     function setName(name) {
         const trimmed = String(name || '').trim();
         if (!trimmed) {
             pendingName = '';
             return { errorCopy: "We need your name at the counter." };
+        }
+        if (!/^[\p{L}][\p{L} '\-]*$/u.test(trimmed)) {
+            pendingName = '';
+            return { errorCopy: "Names use letters only — no numbers or symbols." };
+        }
+        if ([...trimmed].filter((c) => /\p{L}/u.test(c)).length < 2) {
+            pendingName = '';
+            return { errorCopy: "Please give at least two letters — one letter is not enough." };
         }
         if (trimmed.length > 100) return { errorCopy: "That name is too long — keep it under 100 characters." };
         pendingName = trimmed;
