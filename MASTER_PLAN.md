@@ -65,7 +65,7 @@ stateDiagram-v2
 **Deliberate deviations from the spec (with rationale — flag for owner approval):**
 
 1. **Code generation moves server-side.** Spec says the customer page generates the 5-digit code. Client-generated codes cannot be collision-checked atomically across tables. `create_order()` in SQL generates and returns the code in one insert. Customer page displays it; it never invents it.
-2. **Auto-expiration is two-pronged.** GitHub Pages has no cron. `expire_due_orders()` is (a) called lazily by the cashier/kitchen list queries (cheap, self-healing), and (b) scheduled by a Supabase Cron → Edge Function in Phase B. Server-side truth either way.
+2. **Auto-expiration is two-pronged.** GitHub Pages has no cron. `purge_expired_orders()` is (a) called lazily by the cashier/kitchen list queries (cheap, self-healing), and (b) scheduled by a Supabase Cron → Edge Function in Phase B. Server-side truth either way.
 3. **Tailwind CDN is Phase-A-only.** `cdn.tailwindcss.com` is a dev tool. Phase B on Vercel swaps to a compiled CSS build so production ships one cached stylesheet.
 4. **`expired` and `cancelled` statuses are dropped from the spec's enum.** The spec listed both as statuses; under the owner's rule an expired order leaves no row to hold a status. Expiry is a `DELETE`, not an `UPDATE`. Consequence to be aware of: abandoned orders leave **zero trace**, so the owner cannot measure an abandonment rate and the peak-hour heatmap is a heatmap of *paid* orders, not of orders-placed. Accepted as-is; if abandonment ever matters, it needs a separate audit table, which is a Phase-B decision, not a change to this rule.
 
@@ -131,7 +131,13 @@ Ordering System/
 | 7 | Phase A deploy + dogfood | `devops-lead` | GH Pages build, mobile test, 3-order walkthrough | Full loop passes on the public URL: place → pay → serve → analytics |
 | 8 | Phase B Vercel go-live | `devops-lead` | `tools/inject-config.mjs`, `vercel.json`, domain, Tailwind build | Phase A gate green + production checklist §7 all ticked |
 
-**Progress (2026-10-19 → 2026-10-24):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). **Phase 5 complete and gate met** (owner dashboard boots, anonymous blocked, menu builder produced a real renderable item with a Storage image; `sql/06_storage.sql` added; `delete_category`/`update_menu_item` param-ambiguity fixed live). **Phase 6 complete and gate met** (commit `16f399b` — 14/14 envelope probes, link + static-console sweeps clean, one comment defect fixed). **Phase 7 complete and gate met** (Gate A green except the manual phone run — see the `phase-7` commit in §7). **Next up: Phase 8 (Vercel go-live), parked until the phone run and a Vercel account/domain exist.**
+**Progress (2026-10-19 → 2026-10-24):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). **Phase 5 complete and gate met** (owner dashboard boots, anonymous blocked, menu builder produced a real renderable item with a Storage image; `sql/06_storage.sql` added; `delete_category`/`update_menu_item` param-ambiguity fixed live). **Phase 6 complete and gate met** (commit `16f399b` — 14/14 envelope probes, link + static-console sweeps clean, one comment defect fixed). **Phase 7 complete and gate met** (Gate A green except the manual phone run — see the `phase-7` commits in §7).
+**Gate A audit added 2026-10-24:** the audit re-ran the gates on the **public host** with `localStorage` cleared
+and no query params, and found three defects that the localhost verification had masked — a `REPLACE_ME`
+committed config default (site unusable for a first-time visitor), a `/favicon.ico` 404 on every page load, and
+a build-status strip still saying "pending" on a finished site. All three fixed in `b62fd2f`
+(`fix(phase-7): make GitHub Pages usable for a first-time visitor`, pushed). **Next up: Phase 8 (Vercel go-live),
+parked until the phone run and a Vercel account/domain exist.**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
 
@@ -142,20 +148,31 @@ Phases 2–5 are **strictly ordered** (customer before cashier before kitchen be
 `assets/config.js` resolves in this priority order, so the same file works on both hosts:
 
 1. `window.SL_CONFIG` (injected by `tools/inject-config.mjs` at Vercel build time)
-2. `localStorage` override (dev convenience, `?debug=1` page)
+2. `localStorage` override (`sl_config`) — Phase A bootstrap path, dev convenience
 3. Committed defaults — **publishable key only**
 
 ```js
 // assets/config.js  — committed, contains no secret
+const _LS = (() => { try { return JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { return {}; } })();
 export const CONFIG = {
-  sbUrl:  (window.SL_CONFIG?.sbUrl)  || 'https://REPLACE_ME.supabase.co',
-  sbKey:  (window.SL_CONFIG?.sbKey)  || 'sb_publishable_REPLACE_ME',
-  ownerEmails: (window.SL_CONFIG?.ownerEmails || '').split(',').filter(Boolean),
+  sbUrl: (window.SL_CONFIG?.sbUrl) || _LS?.sbUrl || 'https://epldhypmhpxkebtiidsc.supabase.co',
+  sbKey: (window.SL_CONFIG?.sbKey) || _LS?.sbKey || 'sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD',
+  ownerEmails: ((window.SL_CONFIG?.ownerEmails || _LS?.ownerEmails || '').split(',')).filter(Boolean),
   ttlMinutes: 60,
 };
 ```
 
-- **Phase A (GH Pages):** owner pastes URL + publishable key into `?sburl=&sbkey=` once, page writes it to `localStorage`. Nothing secret is committed.
+**DEVIATION (2026-10-24, `b62fd2f`) — supersedes the `REPLACE_ME` example that was written here in Phase 0.**
+The committed defaults are now the **real** project URL and publishable key. A Supabase publishable (client)
+key is public by design — it is the value that ships in a browser — so committing it is not a secret leak; the
+service-role key stays out of the repo and out of the browser entirely. Consequence: a first-time visitor to
+GitHub Pages needs **no query params at all**, which is what made Gate A usable. The `?sburl=&sbkey=` bootstrap
+still exists in `menu.html`/`cashier.html`/`kitchen.html`/`owner.html` and still writes `sl_config`, but it is now
+an **optional override** (dev/testing, or a future project swap), not a requirement. Phase B replaces it with
+`tools/inject-config.mjs` + env vars.
+
+- **Phase A (GH Pages):** nothing required — the committed defaults boot the site. `?sburl=&sbkey=` remains
+  available as an override; `?owneremails=` is still needed for the owner allowlist (no owner email is committed).
 - **Phase B (Vercel):** `SL_SB_URL`, `SL_SB_KEY`, `SL_OWNER_EMAILS` are Vercel env vars; `inject-config.mjs` runs as the build command and writes `assets/config.generated.js`. Service-role key stays **out** of the browser entirely.
 ### 4a. Platform facts verified live (Phases 1–3) — read before touching transport or auth
 
@@ -223,9 +240,11 @@ Shared error UX: network down, DB timeout, invalid code, expired order, duplicat
 - [x] Repo public, Pages enabled from `/` on `main` — `https://savage13317.github.io/sleepless-cafe-pos/` serves `index.html` (200, 10,735 B) from `main`
 - [x] `index.html` is the customer entry only; no POS page links to another POS page or to `Sleepless.html` — link sweep in the phase-6 pass: the only cross-page link is `index.html:160 → menu.html`
 - [x] Staff URLs (`cashier`/`kitchen`/`owner`) unlisted — direct link/bookmark only, `noindex` on all three — `grep noindex` hits `cashier.html:2`, `kitchen.html:2`, `owner.html:2`
-- [ ] `assets/tokens.css` is the only place brand colors are defined
+- [x] `assets/tokens.css` is the only place **brand** colors are defined — audited 2026-10-24: no brand hex is re-declared in any page or in `assets/app.css`. Every hex hit is a documented non-brand exception (`app.css:14/56/72` gradient endpoints `#351f14`/`#b06f23`, each carrying a `/* not a brand token */` comment; `:93` LAST-CALL red `#ffd7d0`; `:95/97` `#c0392b`; `:108` `#ffffff` "max contrast, not brand cream"; `:129` `#ccc`; `menu.html:87/88` inline-SVG logo shape fills; `api.js:40` `#000000` neutral fallback). One unavoidable documented exception: `assets/favicon.svg` mirrors `#140c08`/`#d48d37`/`#f8f1e5` because a favicon is fetched as a standalone document and cannot read `var()` — stated in that file.
 - [x] Supabase project created, `sql/01–05` applied, seed menu present — 12 seed items / 4 categories live
-- [x] Config injected via query param → localStorage, nothing secret committed — `menu.html:103–114` bootstrap; `.gitignore` covers `assets/config.generated.js` and `.env*`
+- [x] Config resolves `window.SL_CONFIG` → `localStorage.sl_config` → **committed public defaults** — `assets/config.js` now commits the real project URL + publishable key (`b62fd2f`), so a first-time visitor needs **no query params**; the `?sburl=&sbkey=` bootstrap (`menu.html:103–114`) survives as an optional override. Nothing secret is committed: the publishable key is public by design, the service-role key is absent from the repo and from the browser, and no owner email is committed. `.gitignore` covers `assets/config.generated.js` and `.env*`
+- [x] No dead request on load — audited 2026-10-24: with no icon declared, every page load requested `/favicon.ico` and GitHub Pages answered **404** (`grep favicon|rel="icon"` → 0 hits repo-wide). Added `assets/favicon.svg` (self-contained, 1,237 B, serves 200) and an identical `<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">` on all five pages at lines 26–28
+- [x] Public pages are honest — the build-status strip in `index.html` said `pending` on all five phases on a finished public site; now `live` ×5 with a note that the staff pages are reached by direct URL, not linked from the root
 - [ ] End-to-end dogfood **on a phone**: place order → cashier confirms → kitchen serves → owner analytics shows it — **manual, needs a real phone**; the desktop-equivalent run on the public URL passed (HANDOFF §7)
 - [x] TTL proven by deletion, not hiding: probe order `code='90001'` with `expires_at` 30 min in the past; the sweep deleted it — `SELECT` for that code → **no row**, `order_items` for that `order_id` → **0**. (Sweep ran with an owner JWT: `orders_staff_delete` is authenticated-only, so an anon sweep cannot delete — that is the RLS boundary, not a TTL bug.)
 - [x] Permanence proven — 10 consecutive authenticated `list_active_pending` calls left all 4 served orders plus the live pending order intact, `order_items` unchanged (5), analytics unchanged
@@ -237,7 +256,7 @@ Shared error UX: network down, DB timeout, invalid code, expired order, duplicat
 - [ ] Tailwind CDN replaced by compiled CSS (no dev-only CDN in prod)
 - [ ] `noindex` guard removed from public customer page, retained on `owner.html`/`cashier.html`/`kitchen.html`
 - [ ] Custom domain + HTTPS; `vercel.json` cache headers (HTML `max-age=0`, assets `max-age=31536000`)
-- [ ] Supabase Cron → `expire_due_orders()` scheduled (server-side TTL, not client-only)
+- [ ] Supabase Cron → `purge_expired_orders()` scheduled (server-side TTL, not client-only)
 - [ ] RLS re-audited: anonymous cannot read other customers' orders or write menu changes
 - [ ] Storage bucket size limit + image re-encode on upload (café menu photos are large)
 - [ ] Lighthouse mobile ≥ 90 on `menu.html`; KDS readable at 2m on a wall-mounted tablet

@@ -70,9 +70,16 @@ hosts:
 2. `localStorage` override — dev convenience (`?debug=1` page)
 3. Committed defaults — **publishable key only**
 
-- **Phase A (GitHub Pages):** the owner pastes the Supabase URL + publishable key
-  into `?sburl=&sbkey=` once; the page writes it to `localStorage`. Nothing secret
-  is committed.
+**Deviation (2026-10-24, commit `b62fd2f`):** the committed defaults are the **real** project URL and
+publishable key, not `REPLACE_ME` placeholders. A Supabase publishable (client) key is public by design —
+it is the value that ships in a browser — so committing it leaks nothing, and it is what makes the GitHub
+Pages deployment work for a first-time visitor with no query string and empty `localStorage`. Before this
+fix a fresh visit rendered zero menu items and showed the "check your connection" copy, because the
+`REPLACE_ME` host does not resolve. The `?sburl=&sbkey=` path still exists and still writes `sl_config`,
+but it is now an **optional override**, not a requirement.
+
+- **Phase A (GitHub Pages):** nothing required — the committed defaults boot the site. `?owneremails=` is
+  still needed for the owner allowlist (no owner email is committed).
 - **Phase B (Vercel):** `SL_SB_URL`, `SL_SB_KEY`, `SL_OWNER_EMAILS` are Vercel env
   vars; `inject-config.mjs` runs as the build command and writes
   `assets/config.generated.js` (git-ignored).
@@ -115,15 +122,20 @@ git push origin main
 Live URLs: `https://<you>.github.io/sleepless-cafe-pos/index.html`, `/menu.html`,
 `/cashier.html`, `/kitchen.html`, `/owner.html`.
 
-### 2. Config injection (Phase A only)
+### 2. Config injection (Phase A only — now optional)
 
-Open each page once with the query params; the page writes them to `localStorage`, so later visits need none.
+`assets/config.js` commits the real project URL and publishable key, so **no page needs config params to
+work**. The bootstrap below is an override path only — use it to point the site at a different Supabase
+project without editing the repo:
 
 - `index.html` — no params (static launcher).
-- `menu.html` — `?sburl=<supabase-url>&sbkey=<publishable-key>`
-- `cashier.html` / `kitchen.html` / `owner.html` — same, plus `?email=&password=` once (stored in `sl_auth`).
+- `menu.html` / `cashier.html` / `kitchen.html` — `?sburl=<supabase-url>&sbkey=<publishable-key>` (optional).
+- `cashier.html` / `kitchen.html` — `?email=&password=` once (stored in `sl_auth`); this is an accepted
+  **Phase-A tradeoff**, removed in Phase B.
+- `owner.html` — `?owneremails=<email>` is still required, since no owner email is committed.
 
-The password is never rendered on screen and never committed; only the publishable key may ever appear in the browser.
+The password is never rendered on screen and never committed; only the publishable key may ever appear in
+the browser.
 
 ### 3. Supabase Dashboard prerequisites
 
@@ -153,7 +165,8 @@ The password is never rendered on screen and never committed; only the publishab
 - [ ] Staff URLs (`cashier`/`kitchen`/`owner`) unlisted — direct link/bookmark only, `noindex` on all three
 - [ ] `assets/tokens.css` is the only place brand colors are defined
 - [ ] Supabase project created, `sql/01–05` applied, seed menu present
-- [ ] Config injected via query param → localStorage, nothing secret committed
+- [ ] Config resolves to the committed public defaults (`assets/config.js` carries the real URL + publishable key); nothing secret is committed — `?sburl=&sbkey=` is an optional override only
+- [ ] No dead request on load: all five pages declare `<link rel="icon" href="assets/favicon.svg">`, so `/favicon.ico` is never requested and 404'd
 - [ ] End-to-end dogfood on a phone: place order → cashier confirms → kitchen serves → owner analytics shows it
 - [ ] TTL proven by deletion, not hiding: place an unpaid order, wait past 60 min, then `SELECT` its code in the Supabase Dashboard → **no row**, and `order_items` count for that `order_id` → **0**
 - [ ] Permanence proven: a `paid` order survives 10 consecutive sweep calls and still appears in analytics

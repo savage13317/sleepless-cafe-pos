@@ -1,7 +1,10 @@
 # HANDOFF.md — Sleepless Cafe POS · continuation brief
 
-**Written:** 2026-10-19 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
-**Where we are:** Phases 1–6 done · **Phase 5 (owner dashboard) gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) is next.**
+**Written:** 2026-10-19 · **updated:** 2026-10-24 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
+**Where we are:** Phases 1–7 done · **Phase 5 gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes
+conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
+host** — Gate A green except the manual phone run — and the Gate A audit fixed three public-host defects
+(commit `b62fd2f`, §4 D2) · **Phase 8 (Vercel go-live) is next and parked.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -180,6 +183,15 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
   `jsonb_build_object` calls, while `sql/02_functions.sql` uses `$$` and wrapped lines. Semantically
   identical; re-pasting the repo file replaces the live rows (never run both sets at once).
 
+### 1.z GitHub Pages serves the **pushed tree** — localhost is not evidence (verified 2026-10-24)
+`https://savage13317.github.io/sleepless-cafe-pos/` serves whatever is on `origin/main`, not the working
+tree. A local fix cannot be verified live until it is **committed AND pushed**, and Pages then needs
+~1–2 min to rebuild. Consequence of the audit on 2026-10-24: every Phase 2–7 gate was verified on
+`localhost:8731` with `?sburl=&sbkey=` query params, which hid three defects that only existed on the
+public host (see §4 D2). Verify on the public URL with `localStorage` cleared and no query params.
+`localStorage` is per-origin in the integrated browser, so clearing it on one `savage13317.github.io`
+page clears it for the others — clear `sl_config` and `sl_auth` before simulating a fresh visitor.
+
 ---
 
 ## 2. Live project state (as of this commit)
@@ -204,6 +216,10 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
 - Local static server (still live): `python -m http.server 8731 --directory <repo root>`.
   Working URLs: `http://localhost:8731/menu.html?sburl=…&sbkey=…`, same for
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
+  The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
+  both hosts boot with no params at all.
+- Git: `main == origin/main == b62fd2f` (`fix(phase-7): make GitHub Pages usable for a first-time visitor`,
+  pushed `af1f4de..b62fd2f`). Working tree clean except the docs pass that added this section.
 
 ---
 
@@ -217,17 +233,22 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
 | `sql/04_realtime.sql` | **Corrected + applied live.** Publication claim replaced with the verified membership+delivery contract; executable `alter publication supabase_realtime add table orders;` added; v4 wire block replaced with the 2.118.0 `.on(...)` surface. |
 | `sql/05_seed.sql` | Applied live, idempotent (`ON CONFLICT (id) DO NOTHING`), no DELETE/TRUNCATE. |
 | `assets/api.js` | 12,895 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 16 fns; `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
-| `assets/config.js` | 1,480 B, untouched. Priority `window.SL_CONFIG` → `localStorage.sl_config` → committed placeholder. **Phase 5 note:** `ownerEmails` comes from `sl_config`, so the staff/owner email must be added there for the owner gate. |
+| `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`), 2,044 B.** Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
+| `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
 | `menu.html` | 20,233 B. Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 40,991 B, **Phase 5 fix applied**. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
-| `index.html` | Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. |
+| `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
 | `tests/api.spec.md` | TRANSPORT NOTE added under §1. |
 | `assets/ui.js` | **Does not exist** and is referenced by no page (only `MASTER_PLAN.md:99`). Deliberate deviation: each page ships its own inline UI, keeping dispatches inside the 1–3 file budget. Do not create dead code. |
 | `Sleepless.html` | Design reference only, never edited. Its dangling `staff.html` link at `:237` is out of scope. |
+
+All five pages (`index.html`, `menu.html`, `cashier.html`, `kitchen.html`, `owner.html`) now carry the
+identical favicon block at lines 26–28, immediately after the `assets/app.css` `<link>` — added because
+with no icon declared every page load requested `/favicon.ico` and GitHub Pages answered 404.
 
 Deleted this session (repo-root junk, never committed): `_probe1.ps1`, `_rc.d.txt`, `_rj.txt`,
 `_rt.d.txt`, and a duplicate root-level `realtime.js` (byte-identical to `assets/realtime.js`).
@@ -296,9 +317,35 @@ manual phone run; evidence in §7 below).**
   now **live** (pushed 2026-10-20, Pages rebuilt — see §7), so `?owneremails=` works on the public site
   without the workaround. (3) the "on a phone" item is manual and still unticked in `MASTER_PLAN.md` §7.
 
+**D2. Phase 7 addendum — Gate A audit on the PUBLIC host, three defects found and fixed (commit
+`b62fd2f`, pushed `af1f4de..b62fd2f`).** The audit re-ran the Phase 2–7 gates against
+`https://savage13317.github.io/sleepless-cafe-pos/` with `localStorage` cleared and **no query params**,
+which is how a real first-time visitor arrives. Phases 2–7 had all been verified on `localhost:8731`
+**with** `?sburl=&sbkey=`, which masked them:
+1. **BLOCKER — the site was unusable for a first-time visitor.** `assets/config.js` committed
+   `https://REPLACE_ME.supabase.co` with an empty `sbKey`, so `menu.html` issued two requests to that
+   host → `net::ERR_NAME_NOT_RESOLVED` ×2 → the app answered with the NETWORK copy
+   ("We can't reach the cafe right now. Check your connection and try again.") and rendered **0 items**.
+   Misleading: the visitor's connection was fine. Fixed by committing the real project URL + publishable
+   key as defaults (public by design; still no secret in the repo). `?sburl=&sbkey=` survives as an
+   optional override, not a requirement.
+2. **Dead request on every visit:** `grep favicon|rel="icon"` → 0 hits repo-wide, so each page load
+   requested `/favicon.ico` and Pages answered 404. Added `assets/favicon.svg` + an identical
+   `rel="icon"` link on all five pages.
+3. **Stale honesty:** the build-status strip in `index.html` said `pending` on all five phases. Now
+   `live` ×5.
+
+Post-fix verification: `assets/favicon.svg` serves `200 1237 B`; with `localStorage` cleared,
+`menu.html` with **no** query params renders the full 12-item catalogue (Coffee 4 / Non-Coffee 3 /
+Pastries 3 / Desserts 2) and zero `REPLACE_ME` requests. The only console message left on every page is
+the documented `cdn.tailwindcss.com` warning, which Gate B removes.
+
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
 `assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
-Gate A is fully green — including the manual phone run — and a Vercel account/domain exist.
+Gate A is fully green — the only item still open is the **manual phone run**, which needs a real phone —
+and a Vercel account/domain exist. Phase-8 prep that does not need a human: Supabase Cron →
+`purge_expired_orders()` (server-side TTL), Tailwind CDN → compiled CSS, and `tools/inject-config.mjs`
+exercised against `SL_SB_URL`/`SL_SB_KEY`/`SL_OWNER_EMAILS`.
 
 Phases 2–5 are strictly ordered; file-count budget per sub-agent dispatch is **1–3 files**;
 backend verified before frontend; modify only the files the task needs.
