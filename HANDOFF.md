@@ -4,8 +4,8 @@
 **Where we are:** Phases 1–7 done · **Phase 5 gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes
 conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
 host** — Gate A green except the manual phone run — the Gate A audit fixed three public-host defects
-(commit `b62fd2f`, §4 D2), and two customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
-`2342c83` + `eab2481`) · **Phase 8 (Vercel go-live) is next and parked.**
+(commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
+`2342c83` + `eab2481` + `1696a96`) · **Phase 8 (Vercel go-live) is next and parked.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -220,8 +220,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
   The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
   both hosts boot with no params at all.
-- Git: `main == origin/main == eab2481` (`fix(phase-7): name field above the cart and one place-order
-  button on menu.html`, pushed `b92c7a4..eab2481`). Working tree clean except the docs pass that added
+- Git: `main == origin/main == 1696a96` (`fix(phase-7): align cart columns, guard the name field, credit the
+  footer on menu.html`, pushed `d80b3e6..1696a96`). Working tree clean except the docs pass that added
   this section.
 
 ---
@@ -239,8 +239,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`), 2,044 B.** Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
-| `assets/app.css` | **7,288 B, extended 2026-10-24 (`2342c83`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity). Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
-| `menu.html` | **26,345 B, fixed 2026-10-24 twice (`2342c83`, then `eab2481`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. |
+| `assets/app.css` | **8,197 B, extended 2026-10-24 three times (`2342c83`, `eab2481`, `1696a96`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity), then `.cart-line` + `.cart-price` (sec 4 D4) which line the amount and the steppers down the cart. Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
+| `menu.html` | **27,472 B, fixed 2026-10-24 three times (`2342c83`, `eab2481`, `1696a96`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 40,991 B, **Phase 5 fix applied**. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
@@ -395,6 +395,35 @@ proceeding checkout"*. Reproduced on `localhost:8731` first, then fixed — one 
   for a few minutes. Before trusting a browser test on the public URL, confirm the new markers are live
   with `curl` — `id="cartarea"` and `nameFieldHtml` present, `data-placeorder` absent.
 
+**D4. Phase 7 addendum 3 — cart columns, name guard, footer credit on `menu.html` (commit `1696a96`, pushed
+`d80b3e6..1696a96`)**
+
+Four more defects reported from the live page, all in `menu.html` + `assets/app.css` (2 files, 40 insertions /
+3 deletions). Verified live on `localhost:8731` before committing.
+
+- **Amounts and `+` / `−` did not line up down the cart.** The row was `flex items-center justify-between gap-2`,
+  which distributes the leftover space *between* the items, so the amount and the buttons landed at a different
+  x on every line. **A plain `auto` grid does not fix it** — every `.cart-line` is its own grid container, so
+  `auto` columns size per row and the steppers still drifted (measured `priceX = 546, 553, 546`). The amount
+  track therefore gets a minimum (`minmax(6.5rem, auto)`) and the number is pushed to the END of it with
+  `justify-self: end`, which puts every amount flush at one x and keeps the two 40 px stepper columns straight
+  underneath. Measured after the fix over three rows: `AMT_R = 599, 599, 599`, `PLUS = 611, 611, 611`,
+  `REM = 715, 715, 715`. The name column (`1fr`) absorbs the leftover. No brand color in the block — layout only.
+- **`setName` accepted the digits-only name in the screenshot (`12312312`, order `51408`).** Now letters-only:
+  `/^\p{L}\p{L} '\-]*$/u`, so Unicode letters (`José`), spaces (`Mary Ann`), apostrophes (`O'Brien`, `D'Angelo`)
+  and hyphens (`Anne-Marie`) stay legal; a one-letter name is refused separately. Two new human copies: "Names
+  use letters only — no numbers or symbols." and "Please give at least two letters — one letter is not enough."
+  Refusals are client-side, before any request. **The server CHECK is unchanged** (`length(trim(customer_name))
+  BETWEEN 1 AND 100` in `sql/01_schema.sql`) — tightening the DB rule is a separate backend dispatch, and
+  `INVALID_CUSTOMER_NAME` stays the backstop.
+- **Success instruction was left-aligned** in the card → `mx-auto` + `text-center` (measured `LGAP = RGAP = 107`).
+- **Footer credit** added under the peso line: `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.`
+  (`text-2xs` is not a Tailwind class, so `text-xs` was used). **Only `menu.html` carries it** — the four staff
+  pages can mirror it on request.
+- **Cleanup:** the six `pending_payment` claims left by this verification pass — `12978`, `29872`, `54154`,
+  `87121`, `02910`, `51408` — were all voided with `void_order` (`"voided": true` each). `list_active_pending`
+  now returns `[]` and `orders` / `order_items` are back to 6 / 6 rows, matching the counts above.
+
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
 `assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
 Gate A is fully green — the only item still open is the **manual phone run**, which needs a real phone —
@@ -464,14 +493,19 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-HEAD      fix(phase-7): close role caveat - staff-gate principal proves staff flows + RLS fences
-          feat(phase-7): GitHub Pages dogfood - Gate A green (TTL deletion + permanence proven)
-16f399b fix(phase-6): QA sweep - envelope compliance verified live, uploadImage comment corrected
-0375ac8 feat(phase-5): owner dashboard bootstrap + menu-images Storage ACLs
-e3878a3 fix(phase-5): rename colliding SQL function parameters to p_*
-7ea5cb7 docs: record Phase 4 completion and set Phase 5 as next action        <- origin/main
-19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0
+1696a96 fix(phase-7): align cart columns, guard the name field, credit the footer   <- HEAD == origin/main
+d80b3e6 docs(phase-7): record the checkout restructure - name above cart, one action button
+eab2481 fix(phase-7): name field above the cart + one place-order action
+b92c7a4 docs(phase-7): record the cart-line controls + visible size selection
+2342c83 fix(phase-7): cart line controls + visible size selection
+d9ccdca docs(phase-7): record Gate A live evidence - 7/7 fresh-visitor walkthrough
+bb58747 docs(phase-7): record the Gate A audit - 4 defects found, 3 fixed
+b62fd2f fix(phase-7): make Pages usable for a first-time visitor
+af1f4de docs: record Phase 7 completion - Gate A met live
 ```
+`main` **== `origin/main`** — the human authorized pushing in this thread, so every commit above is live on
+GitHub Pages. Standing rule for future sessions: the agent does not push on its own — a push needs an explicit
+human request.
 `main` **== `origin/main`** — the human pushed `7ea5cb7..cbca447` on 2026-10-20. GitHub Pages rebuilt
 and the live `owner.html` now carries the phase-5 bootstrap fix (`owneremails` 2 hits, `!emails` 1,
 `ownerEmails` 3, `split` 3 — matching `owner.html:97–115` + the gate at `:652`), so the `?owneremails=`

@@ -145,7 +145,13 @@ and the selected size is a filled chip plus check icon plus `aria-label`.
 then asked for the name above the cart and for one action button. `menu.html` now paints three sibling
 blocks in order — menu, Full Name card, cart — `Proceed to Checkout` is itself the place-order action
 (no second button, no armed flag, no `change` listener), and a blank name is refused client-side with a
-visible line above the still-present field before any request is sent. **Next up: Phase 8 (Vercel go-live),
+visible line above the still-present field before any request is sent.
+**Cart columns, name guard and footer credit fixed 2026-10-24 (`1696a96`, pushed `d80b3e6..1696a96`):** the
+same visitor then reported four polish defects — cart amounts and `+`/`−` at a different x on every line
+(`justify-between` spreads leftover space between items; a plain `auto` grid still sizes per row, so the amount
+track needs `minmax(6.5rem, auto)` plus `justify-self: end`), the name field accepting `12312312`, the success
+instruction left-aligned in the card, and no footer credit. All four fixed in `menu.html` + `assets/app.css`;
+the server-side name CHECK was deliberately left as the looser backstop. **Next up: Phase 8 (Vercel go-live),
 parked until the phone run and a Vercel account/domain exist.**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
@@ -234,7 +240,7 @@ Reuse, do not reinvent: `brand.dark #140c08`, `brand.card #221610`, `brand.accen
 
 | Page | Layout target | Specific requirements |
 |---|---|---|
-| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, **size chips where the selected one is visibly marked — filled chip + check icon + `aria-label`, never color alone**, ₱price, `+`/`−` stepper for the NEXT add, Add to Cart); cart drawer with itemized totals — **every cart line carries its own `+` / `−` / `Remove` controls and `−` at ×1 deletes the line**; the **Full Name field sits ABOVE the cart** (its own block, repainted independently of the menu) and **`Proceed to Checkout` is the single place-order action — it reads that field, refuses a blank name with a visible line above the field, and only then sends**; success screen shows code + name + 60-min instruction verbatim from spec |
+| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, **size chips where the selected one is visibly marked — filled chip + check icon + `aria-label`, never color alone**, ₱price, `+`/`−` stepper for the NEXT add, Add to Cart); cart drawer with itemized totals — **every cart line carries its own `+` / `−` / `Remove` controls and `−` at ×1 deletes the line**; the **Full Name field sits ABOVE the cart** (its own block, repainted independently of the menu) and **`Proceed to Checkout` is the single place-order action — it reads that field, refuses a blank name with a visible line above the field, and only then sends**; success screen shows code + name + 60-min instruction verbatim from spec — **the instruction paragraph is centered (`mx-auto` + `text-center`)**; **cart rows are a grid (`.cart-line`), not flex, with the amount flush at one x (`minmax(6.5rem, auto)` + `justify-self: end`) and the two stepper columns straight underneath**; the name guard is **letters-only (`/^\p{L}\p{L} '\-]*$/u`) with a two-letter minimum**, so digits and symbols never reach the counter; footer carries `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
 | `cashier.html` | Desktop/tablet, `max-w-7xl` | Big code-input field (typed or scanned), instant lookup; live unpaid table columns exactly: Code · Customer Name · Time Created · Time Remaining · No. of Items/Drinks · Total Amount; Confirm Payment button. Rows **vanish** at 60 min (Realtime `DELETE` or a re-purged poll — identical result). Under 2 min remaining the row turns red and reads **LAST CALL**, since the next click may already be past the deadline |
 | `kitchen.html` | KDS: high contrast, large text, tap targets ≥ 48px | Cards sorted by `paid_at`; shows name + code + paid time + **live elapsed counter**; itemized list with sizes; Mark as Served button; card leaves view |
 | `owner.html` | Tabbed admin | Tab1 Sales (daily/monthly/yearly + revenue/orders/AOV + export CSV) · Tab2 Turnover (avg fulfillment, peak-hour heatmap) · Tab3 Menu builder (image upload → Storage, dynamic size/price pairs) · Tab4 Category create/reorder/delete |
