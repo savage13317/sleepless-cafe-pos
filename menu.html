@@ -84,9 +84,17 @@
 
     <main id="app" class="max-w-5xl w-full mx-auto px-4 flex-1"></main>
 
-    <!-- Name field lives OUTSIDE #app so re-rendering the menu/cart never
-         destroys it. Print rule: only the success card survives on paper. -->
+    <!-- Name field lives OUTSIDE #app so re-rendering the menu never destroys
+         it, and it sits ABOVE the cart on purpose: the customer writes their
+         name before they look at the total, so the field is already filled by
+         the time they tap Proceed to Checkout at the foot of the cart. -->
     <div id="namefield" class="max-w-5xl w-full mx-auto px-4"></div>
+
+    <!-- The cart is its own block, below the name field. It is outside #app for
+         the same reason the field is: paint() replaces #app's innerHTML, and a
+         cart inside #app could not be repainted without being destroyed by the
+         menu render. -->
+    <div id="cartarea" class="max-w-5xl w-full mx-auto px-4"></div>
 
     <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
         <p class="text-brand-muted text-xs">
@@ -254,18 +262,19 @@
     }
 
     /* --- main render ----------------------------------------------------- */
-    function render() {
-        if (orderResult) return renderSuccess();
-        const tabs = renderTabs();
-        return tabs + renderItems(activeCat) + renderCart();
+    /* Three blocks, in the order a customer reads them: the menu, the name
+       field (ABOVE the cart), the cart. Each is its own element because paint()
+       replaces innerHTML — an <input> inside #app would be destroyed on every
+       repaint. renderError() is the copy only; whether the cart stays visible
+       is paintError()'s decision, since the cart now lives in its own block. */
+    function renderMenu() {
+        return renderTabs() + renderItems(activeCat);
     }
 
     function renderError(res) {
         const copy = ERR_COPY[res.error?.code] ?? ERR_COPY.HTTP;
-        const fixable = res.error?.code === 'MENU_ITEM_UNAVAILABLE' || res.error?.code === 'INVALID_SIZE';
         return `<div class="glass-card rounded-xl p-4 my-4">
             <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
-            ${fixable ? renderCart() : ''}
           </div>`;
     }
 
@@ -303,8 +312,11 @@
     }
 
     let pendingName = '';
-    let awaitingName = false;   /* true only after "Proceed to Checkout" is tapped */
 
+    /* The name is read from the field above the cart at the moment Proceed to
+       Checkout is tapped. A blank field is refused HERE, client-side, before any
+       request is sent — an order can never be placed without a name, and the
+       server's INVALID_CUSTOMER_NAME guard stays as the backstop. */
     function setName(name) {
         const trimmed = String(name || '').trim();
         if (!trimmed) {
@@ -395,10 +407,10 @@
             }
         }
         else if (t.dataset.checkout !== undefined) {
-            awaitingName = true;   /* checkout prompts for the name next */
-            paint();
-        }
-        else if (t.dataset.placeorder !== undefined) {
+            /* Proceed to Checkout IS the place-order action — there is no second
+               "Place Order" button to tap. It reads the name field above the
+               cart, refuses a blank one with a human line, and only sends when
+               the name is real. */
             const input = document.querySelector('[data-name-input]');
             const bad = setName(input ? input.value : '');
             if (bad) { paintNameCopy(bad.errorCopy); } else { void runCheckout(); }
@@ -406,11 +418,16 @@
     });
 
     function paint() {
-        document.getElementById('app').innerHTML = render();
+        if (orderResult) {
+            document.getElementById('app').innerHTML = renderSuccess();
+            document.getElementById('cartarea').innerHTML = '';
+            return;
+        }
+        document.getElementById('app').innerHTML = renderMenu();
+        document.getElementById('cartarea').innerHTML = renderCart();
     }
 
     async function runCheckout() {
-        awaitingName = false;
         const res = await checkout();
         if (res.success) {
             document.getElementById('namefield').innerHTML = '';
@@ -419,39 +436,50 @@
         if (!res.success) paintError(res);
     }
     function paintError(res) {
+        /* Keep the cart visible when the customer can fix it by adjusting the
+           cart (an item went away, a size changed) — they should not have to
+           rebuild their order from memory. */
+        const fixable = res.error?.code === 'MENU_ITEM_UNAVAILABLE'
+            || res.error?.code === 'INVALID_SIZE';
         document.getElementById('app').innerHTML = renderError(res);
+        document.getElementById('cartarea').innerHTML = fixable ? renderCart() : '';
     }
 
     /* --- name input: inline, trimmed, 1–100 chars ------------------------ */
+    /* No submit button here. The field sits above the cart and the single
+       action button is "Proceed to Checkout" at the foot of the cart, so typing
+       must never fire a request on its own — the customer taps the button once
+       the whole order is right. */
     function openNameInput() {
-        const host = document.getElementById('namefield');
-        host.innerHTML =
-            `<div class="glass-card rounded-xl p-4 mt-4">
+        document.getElementById('namefield').innerHTML = nameFieldHtml('');
+    }
+
+    /* One builder, two states: quiet, or carrying a refusal line. The refusal
+       must stay VISIBLE next to the field — the old code swapped the field for
+       the copy and then re-rendered the field immediately, so the message never
+       survived a frame and a blank tap looked like nothing happened. */
+    function nameFieldHtml(complaint) {
+        return `<div class="glass-card rounded-xl p-4">
+               ${complaint ? `<p class="text-brand-accentLight text-sm font-semibold mb-2">${esc(complaint)}</p>` : ''}
                <label class="text-brand-muted text-xs uppercase tracking-wider">Full name at the counter</label>
                <input type="text" placeholder="e.g. Maria Santos"
                       class="rounded-md p-2 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full"
-                      data-name-input></div>
-               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-placeorder>Place Order</button>`;
-        const input = host.querySelector('[data-name-input]');
-        input.addEventListener('change', () => {
-            if (!awaitingName) return;
-            const bad = setName(input.value);
-            if (bad) { paintNameCopy(bad.errorCopy); } else { void runCheckout(); }
-        });
+                      data-name-input>
+               <p class="text-brand-muted text-xs mt-1">Type your name, then tap Proceed to Checkout at the foot of your cart.</p>
+             </div>`;
     }
 
-    /* swap the field for a one-line copy, then bring the field back */
+    /* Refusal: keep the field, add the line above it, so the customer can fix
+       it and tap again. Nothing was sent — the cart is untouched. */
     function paintNameCopy(copy) {
-        const host = document.getElementById('namefield');
-        host.innerHTML = `<div class="glass-card rounded-xl p-3"><p class="text-brand-accentLight text-sm">${esc(copy)}</p></div>`;
-        openNameInput();
+        document.getElementById('namefield').innerHTML = nameFieldHtml(copy);
     }
 
     /* --- boot ------------------------------------------------------------ */
     (async function () {
         const loadErr = await loadCatalogue();
         if (loadErr) {
-            document.getElementById('app').innerHTML = renderError(loadErr);
+            paintError(loadErr);
             return;
         }
         paint();
