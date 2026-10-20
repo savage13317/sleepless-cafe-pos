@@ -188,11 +188,17 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
   "sleepless-cafe", branch `main (Production)`, plan **FREE**.
 - Publishable (client) key — public by design: `sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD`.
   The service-role/secret key has never been shipped to a browser and must never be.
-- DB: seed + Phase-4 probe orders — `orders` 3 (`63242` and `02342` both `status=served` with `served_at`
-  + `fulfillment_time_seconds` 1641/894; `13977` still `pending_payment`), `order_items` populated,
-  `categories` 4, `menu_items` 12.
-  Category UUIDs `11111111-1111-1111-8333-000000000001..4` (Coffee 1, Non-Coffee 2, Pastries 3,
-  Desserts 4). Menu UUIDs `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty.
+- DB (current, re-verified live): `menu_items` **12**, `categories` **4** — category UUIDs
+  `11111111-1111-1111-8333-000000000001..4` (Coffee 1, Non-Coffee 2, Pastries 3, Desserts 4); menu UUIDs
+  `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty. `orders` **5, all `status=served`**
+  — `63242` and `02342` (2026-10-19), `13341` "Gate A Walker", `21574` "Gate A Second", `85063` (staff-role
+  proof, 2026-10-20) — with `order_items` **5**. No `pending_payment` rows: the unpaid probes (`13977`,
+  `71377`, `90001`) were purged by TTL or voided, which is the designed behaviour, not a bug.
+- Auth users (password grant, "Confirm email" OFF → autoconfirm): owner `owner@sleepless-cafe.test`
+  (`e5db228e-0041-413f-a0f7-279e1adf5db9`) and staff `staff-gate@sleepless-cafe.test`
+  (`3427770d-2f86-479a-b369-ff459e23484e`). The two `staff-probe` users (`890bb2f2-4ee3-45ce-9935-392dd032663d`,
+  `85547c24-f226-4e96-b6d3-b77a331a3b8a`) have unrecorded passwords and 400 on sign-in — ignore them.
+  Demo passwords live in the transcript/shell only, never in a committed file.
 - All probe objects removed live (`zz_probe_tbl`, `zz_view1`, `zz_probe_fn`, `zz_p1..zz_p6`,
   `zz_m1..zz_m3`).
 - Local static server (still live): `python -m http.server 8731 --directory <repo root>`.
@@ -282,9 +288,11 @@ manual phone run; evidence in §7 below).**
   unpaid orders never counted).
 - Caveats: (1) the cashier session used the **owner's** credentials — the two `staff-probe` Auth users'
   passwords were never recorded, so their sign-in returned 400; `mark_paid`/`mark_served` need only
-  `authenticated`, so the flow is proven but not role-differentiated. (2) the pushed `owner.html`
-  predates the phase-5 bootstrap fix, so `?owneremails=` was ignored on the public site — worked around
-  by writing `sl_config.ownerEmails` into `localStorage`; the fix is committed at `0375ac8` and lands
+  `authenticated`, so the flow is proven but not role-differentiated. **Closed afterwards:** a real
+  non-owner user `staff-gate@sleepless-cafe.test` (`3427770d-2f86-479a-b369-ff459e23484e`) was created and
+  the whole create → pay → serve flow plus the RLS-fence probes were re-run on its JWT (§7). (2) the pushed
+  `owner.html` predates the phase-5 bootstrap fix, so `?owneremails=` was ignored on the public site — worked
+  around by writing `sl_config.ownerEmails` into `localStorage`; the fix is committed at `0375ac8` and lands
   once `main` is pushed. (3) the "on a phone" item is manual and still unticked in `MASTER_PLAN.md` §7.
 
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
@@ -353,16 +361,35 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-HEAD      feat(phase-7): GitHub Pages dogfood - Gate A green (TTL deletion + permanence proven)
+HEAD      fix(phase-7): close role caveat - staff-gate principal proves staff flows + RLS fences
+          feat(phase-7): GitHub Pages dogfood - Gate A green (TTL deletion + permanence proven)
 16f399b fix(phase-6): QA sweep - envelope compliance verified live, uploadImage comment corrected
 0375ac8 feat(phase-5): owner dashboard bootstrap + menu-images Storage ACLs
 e3878a3 fix(phase-5): rename colliding SQL function parameters to p_*
 7ea5cb7 docs: record Phase 4 completion and set Phase 5 as next action        <- origin/main
 19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0
-c581d84 feat(phase-4): kitchen KDS board and realtime watcher (ws path still broken)
 ```
-`main` is **4 ahead of `origin/main`** once the commit above lands. The repo is pushed by the human,
-not by the agent — do not `git push` from here.
+`main` is **5 ahead of `origin/main`**. The repo is pushed by the human, not by the agent — do not
+`git push` from here.
 
 Conventional-commit style is the project's; keep `fix(phase-N):` / `feat(phase-N):` prefixes and
 put the live-verification evidence in the commit body, as the three commits above do.
+
+### Role-differentiation proof (staff-gate JWT) — closes the Phase-7 caveat
+
+Principal `staff-gate@sleepless-cafe.test` → `3427770d-2f86-479a-b369-ff459e23484e`, `role: authenticated`,
+created through `POST /auth/v1/signup?grant_type=signup` (autoconfirm) and exchanged for a 958-char JWT
+through the password grant. Probes with **that** JWT:
+
+| Probe | Result | Verdict |
+| --- | --- | --- |
+| `list_active_pending`, `kitchen_queue` | 200 `success:true`, `data:[]` | staff read policies hold (empty because every order is `served`) |
+| `sales_summary`, `turnover_stats` | 200 `success:true` (615.00 / 4 / 153.75; sample 4, avg 642, p95 1641) | **expected**: the only guard is `IF email = ''` (`sql/02_functions.sql:393…553`) — signed-in vs anon. Owner-only is a UI allowlist decision (§9.7), not a JWT claim check |
+| `create_menu_item`, `update_menu_item` | 200 `success:true` | same reason; throwaway row deleted back to 12 items, so the catalogue is clean |
+| `void_order` on a `served` order | `NOT_VOIDABLE` | `orders_staff_delete` allows DELETE only where `status='pending_payment'` |
+| raw `PATCH /rest/v1/orders?code=eq.63242` → `pending_payment` | **403 / 42501** "new row violates row-level security policy" | `orders_staff_update` WITH CHECK rejects an illegal lifecycle flip |
+| `create_order` as **anon** → `confirm_payment` → `mark_served` with the staff JWT | 200 each; `85063` `paid` at 02:34:10.17, `served` at 02:34:10.56, `fulfillment_time_seconds` 0 | the cashier/kitchen flows work for a signed-in **non-owner** |
+
+Note: the GET form of the two boards answers `25006 cannot execute DELETE in a read-only transaction`
+because they call `purge_expired_orders()`; `api.js` POSTs them, which is the correct form.
+Final counts after the proof: `menu_items` 12, `categories` 4, `orders` 5 (all `served`), `order_items` 5.
