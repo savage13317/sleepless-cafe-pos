@@ -216,9 +216,12 @@ export async function updateMenuItem(menuItemId, name, description, imageUrl, si
   });
 }
 
-/* Storage upload: PUT into the public `menu-images` bucket (owner creates that
-   bucket once in the Dashboard; RLS lets authenticated users write, anon cannot).
-   Returns the public URL for menu_items.image_url. Slug-safe object names only. */
+/* Storage upload: POST into the public `menu-images` bucket with `x-upsert: true`
+   (the docs-confirmed form; verified live: authenticated POST 200, anon POST 403).
+   Owner creates that bucket once in the Dashboard; RLS lets authenticated users
+   write, anon cannot. Overwriting an existing slug additionally needs the SELECT
+   + UPDATE policies, which sql/06_storage.sql grants. Returns the public URL for
+   menu_items.image_url. Slug-safe object names only. */
 export async function uploadImage(fileName, bytes, contentType) {
   const slug = String(fileName).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 80) || 'photo';
   try {

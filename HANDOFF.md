@@ -1,7 +1,7 @@
 # HANDOFF.md — Sleepless Cafe POS · continuation brief
 
 **Written:** 2026-10-19 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
-**Where we are:** Phases 1–5 done and applied live · **Phase 4 (kitchen realtime) gate PASSED** (commit `19fef79`) · **Phase 5 (owner dashboard) gate PASSED** (auth gate blocks anonymous; menu builder created a real, renderable item with a Storage-hosted photo) · **Phase 6 (QA sweep) is next.**
+**Where we are:** Phases 1–6 done · **Phase 5 (owner dashboard) gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) is next.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -243,18 +243,28 @@ evidence: dot = WS live, paid card appears on the KDS with **no reload**, and `m
 - owner RPCs verified live with an owner bearer token: `sales_summary` → `{"revenue":230.00,"completed_count":2,"aov":115.00,"grain":"daily","buckets":[{"count":2,"label":"2026-10-19","revenue":230.00}]}`; `turnover_stats` → `{"sample_size":2,"avg_fulfillment_seconds":1268,"p95_fulfillment_seconds":1641,"peak_hours":[{"hour":12,"orders":2}]}`; `create_category`/`reorder_categories`/`delete_category`/`create_menu_item`/`update_menu_item`/`void_order` all returned `success:true` envelopes.
 - The seeded pending order aged out of TTL during the session, so `orders` now holds only the 2 served rows — expected purge behaviour, not a bug.
 
-**Start here next → C. Phase 6 — QA (`qa-engineer`)**
+**C. Phase 6 — QA (`qa-engineer`) — DONE (sweep passed, see the `phase-6` commit in §7).**
+- 14/14 live anon probes conform to the `{success,data,error}` envelope. All 7 owner RPCs answer
+  `OWNER_SESSION_REQUIRED` as anon (security boundary re-confirmed); bare `/rest/v1/<fn>` still 404
+  `PGRST205`; `get_order_by_code` bad code → `ORDER_NOT_FOUND`; `list_active_pending`/`kitchen_queue`
+  → `success:true, data:[]` (RLS filters anon's view of `orders` to nothing); `void_order` bad id →
+  `NOT_VOIDABLE`; `create_order` with an unoffered size → `INVALID_SIZE` before any INSERT.
+- Link/asset sweep clean: every `href`/`src` in the 5 pages resolves; the only intended cross-page
+  link is `index.html:160 → menu.html`; no page references `assets/ui.js`.
+- Static console sweep clean: no import/export mismatches (25 exports in `api.js`), no undefined
+  identifiers, no duplicate `id` attributes, all 8 in-page `JSON.parse` sites are `try/catch`-guarded.
+- One defect found and fixed: the comment above `uploadImage` said **PUT** while the code is **POST**
+  + `x-upsert` — comment corrected, code untouched.
+- Flagged, NOT fixed: `void_order` carries no JWT/session guard, so as anon it answers `NOT_VOIDABLE`
+  (its `SELECT` is RLS-filtered to empty) rather than `OWNER_SESSION_REQUIRED`. Safety is RLS
+  (`orders_staff_delete` is authenticated-only + `status='pending_payment'`), so no anon `DELETE` is
+  reachable; "owner-only" is a UI decision (§9.7), not a JWT claim check.
 
-**B. Phase 5 — owner (`frontend-lead` then `backend-lead`).** Fix `owner.html`'s bootstrap
-ordering first; add the staff email to `sl_config.ownerEmails`; Storage upload into the public
-`menu-images` bucket; gate: "Auth gate blocks anonymous; menu builder creates a real, renderable
-item." `void_order` is owner-only and is wired in `owner.html` Tab 1 with the two-step arm/confirm
-(locked decision §9.2).
+**Start here next → D. Phase 7 — GitHub Pages dogfood** (public URL is live; tick the Gate A items
+including the TTL deletion proof and the paid-permanence proof).
 
-**C. Phase 6 — QA (`qa-engineer`).** `tests/api.spec.md` sweep, lint/link checks, "zero console
-errors, zero dead links, envelope compliance on all 5 pages".
-
-**D. Phase 7 — GitHub Pages dogfood:** 3-order walkthrough on the public URL.
+**D. Phase 7 — GitHub Pages dogfood:** 3-order walkthrough on the public URL
+`https://savage13317.github.io/sleepless-cafe-pos/`.
 **E. Phase 8 — Vercel go-live** (`tools/inject-config.mjs` writes `assets/config.generated.js`;
 that file and root `vercel.json` are gitignored artifacts).
 
