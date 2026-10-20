@@ -483,12 +483,24 @@ $$ LANGUAGE plpgsql;
 -- so a category with live items cannot be deleted directly. Order of operations
 -- is what satisfies that CHECK: children are reassigned to fallback_category_id
 -- (or deleted when none is given) BEFORE the category row is dropped.
+--
+-- NEW INVARIANT: order_items.menu_item_id -> menu_items.id carries NO ON DELETE
+-- clause on purpose, because paid orders are the permanent sales record. Deleting
+-- a menu item still referenced by order_items would raise a raw FK violation
+-- (SQLSTATE 23503), so a category whose items were ordered is REFUSED with a
+-- structured envelope (MENU_ITEM_IN_USE) rather than corrupting that record. The
+-- pre-check counts referenced items before the DELETE; the nested
+-- EXCEPTION WHEN SQLSTATE '23503' handler is the portable spelling (plpgsql
+-- condition names are single tokens, so FOREIGN KEY VIOLATION is a 42704 parse
+-- error, and SQLSTATE_VALUE / FK_CONSTRAINT_VIOLATION are both 42704 here) and a
+-- race safety net that rolls the partial DELETE back, so
+-- the category row is never dropped on a refusal.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION delete_category (p_category_id uuid, p_fallback_category_id uuid DEFAULT NULL)
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; cat jsonb; fb jsonb;
-  moved integer := 0;
+  moved integer := 0; blocked integer := 0;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
@@ -503,7 +515,13 @@ BEGIN
   IF p_fallback_category_id IS NOT NULL THEN
     UPDATE menu_items AS m SET category_id = p_fallback_category_id WHERE m.category_id = p_category_id;
   ELSE
-    DELETE FROM menu_items AS m WHERE m.category_id = p_category_id;
+    blocked := COALESCE((SELECT COUNT(*) FROM menu_items AS m WHERE m.category_id = p_category_id AND EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.menu_item_id = m.id)), 0);
+    IF blocked > 0 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_IN_USE', 'message', 'items in that category appear in past orders - move them to another category or hide them instead of deleting')); END IF;
+    BEGIN
+      DELETE FROM menu_items AS m WHERE m.category_id = p_category_id;
+    EXCEPTION WHEN SQLSTATE '23503' THEN
+      RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_IN_USE', 'message', 'items in that category appear in past orders - move them to another category or hide them instead of deleting'));
+    END;
   END IF;
   DELETE FROM categories AS c WHERE c.id = p_category_id;
   RETURN jsonb_build_object('success', true, 'data', cat || jsonb_build_object('items_moved', moved, 'items_deleted', CASE WHEN p_fallback_category_id IS NULL THEN moved ELSE 0 END, 'fallback_category_id', p_fallback_category_id), 'error', NULL);
