@@ -164,24 +164,58 @@ $$ LANGUAGE plpgsql;
 
 
 -- ----------------------------------------------------------------------------
--- get_order_by_code :: cashier.html code lookup. Deliberately does not tell the
--- client whether the code was wrong or simply ran out of time - an expired row
--- no longer exists, so both answers are the same truth.
+-- claim_view :: the cashier's view of ONE live unpaid claim, LINE ITEMS included,
+-- so cashier.html can show the claim as editable cart lines exactly like the
+-- customer cart in menu.html. get_order_by_code, set_claim_item_qty and add_claim_item
+-- all return this same shape, which is what lets a cashier edit repaint from
+-- SERVER truth (recomputed total included) instead of a client-side guess.
+-- Returns NULL when the claim is not a live unpaid one - callers turn that into
+-- their own envelope copy, so this stays the single definition of "open claim".
+-- item_id is the order_items row id: the only stable handle a page can address a
+-- single line by, since two lines of the same item+size never exist (add_claim_item
+-- merges them) and quantity is a column rather than one row per unit.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION get_order_by_code (claim_code text)
+CREATE OR REPLACE FUNCTION claim_view (p_order_id uuid)
 RETURNS jsonb AS $$
-DECLARE
-  row_o jsonb;
 BEGIN
-  row_o := (SELECT jsonb_build_object(
+  RETURN (SELECT jsonb_build_object(
+              'order_id', o.id,
               'code', o.code, 'customer_name', o.customer_name,
               'status', o.status, 'total_amount', o.total_amount,
               'created_at', o.created_at, 'expires_at', o.expires_at,
               'seconds_remaining', GREATEST(0, EXTRACT(EPOCH FROM (o.expires_at - now()))::int),
-              'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id))
+              'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id),
+              'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                    'item_id', oi.id, 'menu_item_id', oi.menu_item_id,
+                    'item_name', oi.item_name, 'size', oi.size,
+                    'quantity', oi.quantity, 'unit_price', oi.unit_price,
+                    'subtotal', oi.subtotal)
+                  ORDER BY oi.item_name ASC, oi.size ASC)
+                FROM order_items AS oi WHERE oi.order_id = o.id), '[]'::jsonb))
            FROM orders AS o
-           WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= now());
+           WHERE o.id = p_order_id AND o.status = 'pending_payment' AND o.expires_at >= now());
+END;
+$$ LANGUAGE plpgsql;
 
+
+-- ----------------------------------------------------------------------------
+-- get_order_by_code :: cashier.html code lookup. Deliberately does not tell the
+-- client whether the code was wrong or simply ran out of time - an expired row
+-- no longer exists, so both answers are the same truth. Delegates the shape to
+-- claim_view so the lookup and every later edit return one identical view.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_order_by_code (claim_code text)
+RETURNS jsonb AS $$
+DECLARE
+  open_id uuid;
+  row_o jsonb;
+BEGIN
+  open_id := (SELECT o.id FROM orders AS o
+              WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= now());
+  IF open_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'ORDER_NOT_FOUND', 'message', 'that order is not open any more'));
+  END IF;
+  row_o := claim_view(open_id);
   IF row_o IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'ORDER_NOT_FOUND', 'message', 'that order is not open any more'));
   END IF;
@@ -211,6 +245,14 @@ $$ LANGUAGE plpgsql;
 -- ----------------------------------------------------------------------------
 -- list_active_pending :: ORDERS BOARD page (the live "waiting for payment"
 -- list). Purges first so the board can never show a dead claim.
+--
+-- ORDER IS SERVER-AUTHORITATIVE: alphabetical by customer_name, case-insensitive
+-- through lower() rather than a COLLATE so no locale collation table is assumed on
+-- this PG 15 project, with newest-created as the tiebreak inside one name. The
+-- cashier reads claims by WHO they are for, not by when they arrived, and a page
+-- level sort could only ever disagree with this one, so cashier.html keeps this
+-- order as returned rather than re-sorting (see the aggregate sort clause note in
+-- the file header for why ORDER BY lives inside jsonb_agg).
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION list_active_pending()
 RETURNS jsonb AS $$
@@ -225,7 +267,7 @@ BEGIN
                 'seconds_remaining', GREATEST(0, EXTRACT(EPOCH FROM (o.expires_at - now()))::int),
                 'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id),
                 'total_amount', o.total_amount)
-                ORDER BY o.created_at DESC)
+                ORDER BY lower(o.customer_name) ASC, o.created_at DESC)
               FROM orders AS o
               WHERE o.status = 'pending_payment' AND o.expires_at >= now()), '[]'::jsonb);
   RETURN jsonb_build_object('success', true, 'data', rows, 'error', NULL);
@@ -370,6 +412,119 @@ BEGIN
   END IF;
   DELETE FROM orders AS o WHERE o.id = order_id AND o.status = 'pending_payment';
   RETURN jsonb_build_object('success', true, 'data', row_o || jsonb_build_object('voided', true), 'error', NULL);
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ----------------------------------------------------------------------------
+-- set_claim_item_qty :: CASHIER page, before payment. The cashier may re-count a
+-- line on a live unpaid claim (+ / - on the cart line) or drop it entirely
+-- (quantity 0 = DELETE that line). Only a pending_payment claim that has not run
+-- out of time is editable, so a paid sale - the permanent record - can never be
+-- repriced. orders.total_amount is recomputed from the lines after every edit,
+-- which is why orders_staff_update in 03_rls.sql also has to accept a PRODUCE
+-- state of pending_payment with paid_at NULL (see the note there).
+--
+-- The last line is protected: a live claim always has at least one line, matching
+-- create_order's non-empty-items rule, so an emptied claim can never be paid as
+-- zero peso. Emptying a claim is a VOID decision, and void_order is the owner's
+-- door - hence LAST_LINE_ONLY rather than a silent delete.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_claim_item_qty (p_order_id uuid, p_item_id uuid, p_quantity integer)
+RETURNS jsonb AS $$
+DECLARE
+  live jsonb;
+  lines integer;
+  total numeric;
+BEGIN
+  live := claim_view(p_order_id);
+  IF live IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim is not open for edits'));
+  END IF;
+  IF p_quantity IS NULL OR p_quantity < 0 OR p_quantity > 999 THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_QTY', 'message', 'quantity must be 0-999, 0 drops the line'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.id = p_item_id AND oi.order_id = p_order_id) THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'LINE_NOT_FOUND', 'message', 'that line is not on this claim'));
+  END IF;
+  lines := COALESCE((SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = p_order_id), 0);
+  IF p_quantity = 0 AND lines <= 1 THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'LAST_LINE_ONLY', 'message', 'that is the only line on this claim - void the claim instead of emptying it'));
+  END IF;
+  IF p_quantity = 0 THEN
+    DELETE FROM order_items AS oi WHERE oi.id = p_item_id AND oi.order_id = p_order_id;
+  ELSE
+    UPDATE order_items AS oi
+      SET quantity = p_quantity,
+          subtotal = oi.unit_price * p_quantity
+      WHERE oi.id = p_item_id AND oi.order_id = p_order_id;
+  END IF;
+  -- the claim total always follows its lines, so the board and the card agree
+  total := COALESCE((SELECT SUM(oi.subtotal) FROM order_items AS oi WHERE oi.order_id = p_order_id), 0);
+  UPDATE orders AS o SET total_amount = total WHERE o.id = p_order_id AND o.status = 'pending_payment';
+  live := claim_view(p_order_id);
+  IF live IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim ran out of time mid-edit'));
+  END IF;
+  RETURN jsonb_build_object('success', true, 'data', live, 'error', NULL);
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ----------------------------------------------------------------------------
+-- add_claim_item :: CASHIER page, before payment. Adds one line to a live unpaid
+-- claim, or bumps the matching line when that item+size is already on it, so a
+-- claim never carries two rows for the same thing (the cart keys by item+size too).
+-- unit_price is pulled from menu_items.sizes_and_prices exactly as create_order
+-- does - the cashier never sends a price, only a catalogue reference - and item_name
+-- / size are snapshotted, so a later rename cannot rewrite this claim.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION add_claim_item (p_order_id uuid, p_menu_item_id uuid, p_size text, p_quantity integer)
+RETURNS jsonb AS $$
+DECLARE
+  live jsonb;
+  menu_row jsonb;
+  price numeric;
+  qty integer;
+  existing_id uuid;
+  total numeric;
+BEGIN
+  live := claim_view(p_order_id);
+  IF live IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim is not open for edits'));
+  END IF;
+  qty := COALESCE(p_quantity, 1);
+  IF qty < 1 OR qty > 999 THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_QTY', 'message', 'quantity must be 1-999'));
+  END IF;
+  menu_row := (SELECT jsonb_build_object('name', m.name, 'sizes', m.sizes_and_prices)
+               FROM menu_items AS m WHERE m.id = p_menu_item_id AND m.is_available = true);
+  IF menu_row IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_UNAVAILABLE', 'message', 'that item is not on the menu right now'));
+  END IF;
+  price := (SELECT (el ->> 'price')::numeric FROM jsonb_array_elements(menu_row -> 'sizes') AS el
+            WHERE (el ->> 'size') = p_size);
+  IF price IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZE', 'message', 'that size is not offered for this item'));
+  END IF;
+  existing_id := (SELECT oi.id FROM order_items AS oi
+                  WHERE oi.order_id = p_order_id AND oi.menu_item_id = p_menu_item_id AND oi.size = p_size);
+  IF existing_id IS NOT NULL THEN
+    UPDATE order_items AS oi
+      SET quantity = LEAST(999, oi.quantity + qty)::int,
+          subtotal = oi.unit_price * LEAST(999, oi.quantity + qty)::int
+      WHERE oi.id = existing_id;
+  ELSE
+    INSERT INTO order_items (order_id, menu_item_id, item_name, size, unit_price, quantity, subtotal)
+      VALUES (p_order_id, p_menu_item_id, menu_row ->> 'name', p_size, price, qty, price * qty);
+  END IF;
+  total := COALESCE((SELECT SUM(oi.subtotal) FROM order_items AS oi WHERE oi.order_id = p_order_id), 0);
+  UPDATE orders AS o SET total_amount = total WHERE o.id = p_order_id AND o.status = 'pending_payment';
+  live := claim_view(p_order_id);
+  IF live IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim ran out of time mid-edit'));
+  END IF;
+  RETURN jsonb_build_object('success', true, 'data', live, 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
 

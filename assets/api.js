@@ -151,6 +151,27 @@ export async function voidOrder(orderId) {
   return await callSql('void_order', { order_id: orderId });
 }
 
+/* --- cashier claim edits (Phase 7, R10 pass): the claim on the board is editable -------
+   claim_view returns one line per order_items row, and item_id IS that row's
+   uuid - the only stable handle a page can address a single line by. quantity 0
+   deletes the line (the SQL refuses only when it is the last one left), so the
+   cashier's Remove button is a 0 and not a separate RPC. Keys are p_-prefixed
+   exactly as the SQL declares them, or PostgREST answers PGRST202. */
+export async function getClaimView(orderId) {
+  return await callSql('claim_view', { p_order_id: orderId });
+}
+export async function setClaimItemQty(orderId, itemId, quantity) {
+  return await callSql('set_claim_item_qty', {
+    p_order_id: orderId, p_item_id: itemId, p_quantity: quantity,
+  });
+}
+export async function addClaimItem(orderId, menuItemId, size, quantity) {
+  return await callSql('add_claim_item', {
+    p_order_id: orderId, p_menu_item_id: menuItemId, p_size: size,
+    p_quantity: quantity,
+  });
+}
+
 /* --- catalogue reads: plain GETs, wrapped in the same envelope ----------- */
 
 async function getRows(path) {
@@ -252,6 +273,14 @@ export async function uploadImage(fileName, bytes, contentType) {
      NOT_SERVABLE           mark_served: order not waiting in the kitchen
      NOT_PREPARABLE         set_preparing: order not waiting to be cooked
      NOT_VOIDABLE           void_order: not an open unpaid claim
+     CLAIM_NOT_OPEN         claim_view / set_claim_item_qty / add_claim_item: that
+                            claim is not a live unpaid one any more (time up, paid,
+                            or gone) - re-look it up instead of editing it
+     LINE_NOT_FOUND         set_claim_item_qty: that line is no longer on the claim
+     INVALID_QTY            set_claim_item_qty / add_claim_item: quantity missing,
+                            negative, or over 999
+     LAST_LINE_ONLY         set_claim_item_qty: the quantity would empty the whole
+                            claim - void it instead of ordering nothing
      OWNER_SESSION_REQUIRED owner RPCs (Phase 5): no signed-in JWT — every one of
                             sales_summary / turnover_stats / create_category /
                             reorder_categories / delete_category / create_menu_item /

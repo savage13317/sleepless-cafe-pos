@@ -92,6 +92,27 @@ CREATE POLICY orders_staff_read ON orders FOR SELECT TO authenticated USING ( tr
 DROP POLICY IF EXISTS order_items_staff_read ON order_items;
 CREATE POLICY order_items_staff_read ON order_items FOR SELECT TO authenticated USING ( true );
 
+-- ----------------------------------------------------------------------------
+-- STAFF LINE-ITEM WRITE (authenticated) - the cashier's claim edits
+-- set_claim_item_qty re-counts or drops one line of a live claim and add_claim_item
+-- adds one, so authenticated needs UPDATE / DELETE / INSERT rights on order_items.
+-- The fence is the WITH CHECK expression, not the policy's existence: the arithmetic
+-- invariant from 01_schema.sql (subtotal = unit_price * quantity, quantity >= 1) is
+-- restated here so a signed-in member cannot plant a line whose subtotal disagrees
+-- with its price, and quantity >= 1 means the drop-a-line path in set_claim_item_qty
+-- MUST be a DELETE rather than an UPDATE to zero - the policy itself refuses a
+-- zero-quantity row. Which claim is editable is fenced inside the function (claim_view
+-- demands pending_payment and unexpired); an RLS WITH CHECK on order_items cannot
+-- restate that, because it would have to read orders, and a policy expression may
+-- only read tables the caller can already read for that same action.
+-- anon holds NO write policy here besides order_items_customer_insert, so a customer
+-- can still only ever CREATE a claim, never edit one.
+-- ----------------------------------------------------------------------------
+DROP POLICY IF EXISTS order_items_staff_write ON order_items;
+CREATE POLICY order_items_staff_write ON order_items FOR ALL TO authenticated
+  USING ( true )
+  WITH CHECK ( quantity >= 1 AND subtotal = unit_price * quantity );
+
 
 -- ----------------------------------------------------------------------------
 -- STAFF WRITE POLICIES (authenticated). These exist because the state-machine
@@ -103,12 +124,18 @@ CREATE POLICY order_items_staff_read ON order_items FOR SELECT TO authenticated 
 DROP POLICY IF EXISTS orders_staff_update ON orders;
 CREATE POLICY orders_staff_update ON orders FOR UPDATE TO authenticated
   USING ( true )
-  WITH CHECK ( ( status = 'paid' OR status = 'preparing' OR status = 'served' ) AND paid_at IS NOT NULL );
+  WITH CHECK ( ( status = 'pending_payment' AND paid_at IS NULL )
+               OR ( ( status = 'paid' OR status = 'preparing' OR status = 'served' ) AND paid_at IS NOT NULL ) );
 
 -- The WITH CHECK means the only rows an authenticated UPDATE may PRODUCE are
--- pipeline rows with paid_at set: a signed-in member can never flip a row back
--- to pending_payment nor clear paid_at, so the monotonic lifecycle holds at the
--- policy level, not just by convention.
+-- legal lifecycle rows: either a still-open claim (pending_payment with paid_at
+-- cleared, which is where it started) or a pipeline row with paid_at set. The
+-- first arm exists because the cashier may re-count a line on a live claim
+-- (set_claim_item_qty / add_claim_item in 02 recompute orders.total_amount), so
+-- an UPDATE that only moves the money on an OPEN claim must be allowed. It is
+-- not a loophole: the arm demands paid_at IS NULL, so a signed-in member still
+-- cannot flip a paid row back to pending_payment nor clear paid_at, and the
+-- monotonic lifecycle holds at the policy level rather than by convention.
 
 DROP POLICY IF EXISTS orders_staff_delete ON orders;
 CREATE POLICY orders_staff_delete ON orders FOR DELETE TO authenticated USING ( status = 'pending_payment' );
@@ -140,6 +167,13 @@ CREATE POLICY menu_items_staff_write ON menu_items FOR ALL TO authenticated
 
 -- ----------------------------------------------------------------------------
 -- Summary of what is granted (nothing else is):
+--   ADDED THIS PASS: order_items also has UPDATE / DELETE / INSERT rights for
+--   authenticated through order_items_staff_write (quantity >= 1 and subtotal =
+--   unit_price * quantity fenced in the WITH CHECK), which is what set_claim_item_qty
+--   and add_claim_item need. The table rows below predate that pass - the one line
+--   "NO role INSERT policy on order_items besides anon" is therefore superseded:
+--   authenticated may INSERT order_items, but only through add_claim_item, which
+--   prices the line from menu_items itself.
 --   menu_items            READ  anon, authenticated   WRITE authenticated (ALL)
 --   categories            READ  anon, authenticated   WRITE authenticated (ALL)
 --   orders                INSERT anon        READ authenticated   UPDATE authenticated   DELETE authenticated
