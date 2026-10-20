@@ -237,7 +237,12 @@ Shared error UX: network down, DB timeout, invalid code, expired order, duplicat
 ## 7. Deployment Gates
 
 ### Gate A — GitHub Pages (development)
-- [x] Repo public, Pages enabled from `/` on `main` — `https://savage13317.github.io/sleepless-cafe-pos/` serves `index.html` (200, 10,735 B) from `main`
+
+**Status 2026-10-24: 12/13 ticked.** The only open item is the manual phone dogfood, which needs a real
+phone (a human). Everything else, including the fresh-visitor run on the public host with no query params
+and `localStorage` cleared, is green — see HANDOFF §4 D2 for the audit and the 7/7 post-fix walkthrough.
+
+- [x] Repo public, Pages enabled from `/` on `main` — `https://savage13317.github.io/sleepless-cafe-pos/` serves `index.html` (200, 11,072 B — post-fix size, was 10,735 B) from `main`
 - [x] `index.html` is the customer entry only; no POS page links to another POS page or to `Sleepless.html` — link sweep in the phase-6 pass: the only cross-page link is `index.html:160 → menu.html`
 - [x] Staff URLs (`cashier`/`kitchen`/`owner`) unlisted — direct link/bookmark only, `noindex` on all three — `grep noindex` hits `cashier.html:2`, `kitchen.html:2`, `owner.html:2`
 - [x] `assets/tokens.css` is the only place **brand** colors are defined — audited 2026-10-24: no brand hex is re-declared in any page or in `assets/app.css`. Every hex hit is a documented non-brand exception (`app.css:14/56/72` gradient endpoints `#351f14`/`#b06f23`, each carrying a `/* not a brand token */` comment; `:93` LAST-CALL red `#ffd7d0`; `:95/97` `#c0392b`; `:108` `#ffffff` "max contrast, not brand cream"; `:129` `#ccc`; `menu.html:87/88` inline-SVG logo shape fills; `api.js:40` `#000000` neutral fallback). One unavoidable documented exception: `assets/favicon.svg` mirrors `#140c08`/`#d48d37`/`#f8f1e5` because a favicon is fetched as a standalone document and cannot read `var()` — stated in that file.

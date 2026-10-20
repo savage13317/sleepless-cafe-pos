@@ -202,9 +202,10 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   The service-role/secret key has never been shipped to a browser and must never be.
 - DB (current, re-verified live): `menu_items` **12**, `categories` **4** — category UUIDs
   `11111111-1111-1111-8333-000000000001..4` (Coffee 1, Non-Coffee 2, Pastries 3, Desserts 4); menu UUIDs
-  `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty. `orders` **5, all `status=served`**
+  `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty. `orders` **6, all `status=served`**
   — `63242` and `02342` (2026-10-19), `13341` "Gate A Walker", `21574` "Gate A Second", `85063` (staff-role
-  proof, 2026-10-20) — with `order_items` **5**. No `pending_payment` rows: the unpaid probes (`13977`,
+  proof, 2026-10-20), `33667` "Maria Santos" (post-fix public-host dogfood, order_id `ad8a1542-bd8a-4a0c-98e9-a016ac604204`)
+  — with `order_items` **6**. No `pending_payment` rows: the unpaid probes (`13977`,
   `71377`, `90001`) were purged by TTL or voided, which is the designed behaviour, not a bug.
 - Auth users (password grant, "Confirm email" OFF → autoconfirm): owner `owner@sleepless-cafe.test`
   (`e5db228e-0041-413f-a0f7-279e1adf5db9`) and staff `staff-gate@sleepless-cafe.test`
@@ -339,6 +340,16 @@ Post-fix verification: `assets/favicon.svg` serves `200 1237 B`; with `localStor
 `menu.html` with **no** query params renders the full 12-item catalogue (Coffee 4 / Non-Coffee 3 /
 Pastries 3 / Desserts 2) and zero `REPLACE_ME` requests. The only console message left on every page is
 the documented `cdn.tailwindcss.com` warning, which Gate B removes.
+
+**Post-fix dogfood on the public host — 7/7 PASS** (fresh visitor, no query params, `sl_config`/`sl_auth`
+cleared first): catalogue 12/12 rendered with `sl_config` still `null` (the committed defaults did the work,
+nothing written) → order **`33667` "Maria Santos"** (code kept as a 5-digit string) → cashier signed in as
+`staff-gate@sleepless-cafe.test`, countdown `59:19`, Confirm Payment → **"Paid — sent to the kitchen."** →
+kitchen card appeared with the dot reading **WS live**, Mark as Served → **"Marked as served — card leaves
+the board."** → owner gate accepted `?owneremails=` on the public site (no localStorage workaround needed)
+and the Sales tab reads **₱875.00 / 6 completed / ₱145.83 avg**. `rel="icon"` present on all pages;
+`assets/favicon.svg` → 200. Console on a fresh load: the Tailwind CDN warning only — no
+`net::ERR_NAME_NOT_RESOLVED`, no page-initiated `/favicon.ico` request, no NETWORK copy.
 
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
 `assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
