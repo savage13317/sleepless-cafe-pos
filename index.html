@@ -23,6 +23,10 @@
     <link rel="stylesheet" href="assets/tokens.css">
     <link rel="stylesheet" href="assets/app.css">
 
+    <!-- Favicon: with no icon declared, every page load requests /favicon.ico and
+         GitHub Pages answers 404 — a dead request on every visit. SVG only, self-contained. -->
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+
     <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
          Gate A: tokens.css is the single source of truth for brand colors, so
          changing a brand color means editing tokens.css only. The neutral
@@ -168,14 +172,15 @@
         <section class="mt-10 py-4 px-4 rounded-lg border border-brand-border/60 bg-brand-card/40">
             <p class="text-brand-muted text-xs uppercase tracking-wider mb-2">Build status</p>
             <div class="grid grid-cols-1 sm:grid-cols-5 gap-2">
-                <span class="text-brand-muted text-xs block">1 · Backend database — pending</span>
-                <span class="text-brand-muted text-xs block">2 · Customer menu — pending</span>
-                <span class="text-brand-muted text-xs block">3 · Cashier terminal — pending</span>
-                <span class="text-brand-muted text-xs block">4 · Kitchen display — pending</span>
-                <span class="text-brand-muted text-xs block">5 · Owner dashboard — pending</span>
+                <span class="text-brand-muted text-xs block">1 · Backend database — live</span>
+                <span class="text-brand-muted text-xs block">2 · Customer menu — live</span>
+                <span class="text-brand-muted text-xs block">3 · Cashier terminal — live</span>
+                <span class="text-brand-muted text-xs block">4 · Kitchen display — live</span>
+                <span class="text-brand-muted text-xs block">5 · Owner dashboard — live</span>
             </div>
             <p class="text-brand-muted text-xs mt-2">
-                If <em>Open the menu</em> is not reachable yet, that phase is still being built.
+                All five phases are live on this host. The staff interfaces (cashier, kitchen,
+                owner) are deliberately not linked from this page — they are reached by direct URL.
             </p>
         </section>
     </main>

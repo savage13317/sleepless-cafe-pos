@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- assets/favicon.svg — brand mark: cup disc + crema swirl, simplified from the
+       header SVG in index.html. Self-contained on purpose: a favicon is fetched as
+       a standalone document, so it cannot read assets/tokens.css and var() is not
+       available here. The three hexes below are the documented exception to Gate A
+       (tokens.css is the single source of truth): they are copied verbatim from
+       the brand-dark, brand-accent and brand-cream custom properties declared
+       there, and any palette change is made in tokens.css FIRST, then mirrored
+       here. No scripts, no external refs. (XML comments cannot carry the double
+       hyphen that prefixes a custom property name, hence the bare names above.)
+       viewBox 64x64 keeps the mark crisp at both 32x32 and 64x64. -->
+  <circle cx="32" cy="32" r="32" fill="#140c08"/>
+  <circle cx="32" cy="32" r="25" fill="none" stroke="#d48d37" stroke-width="3"/>
+  <path d="M32 45.5 C32 45.5, 23 44, 23 32 C23 27.5, 27.5 26, 32 30.5 C36.5 26, 41 27.5, 41 32 C41 44, 32 45.5, 32 45.5 Z" fill="#f8f1e5"/>
+  <circle cx="32" cy="23" r="2" fill="#f8f1e5"/>
+</svg>
