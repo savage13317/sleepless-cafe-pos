@@ -168,6 +168,14 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
 - `date_trunc('date', timestamptz)` raises `22023` — must be `'day'`.
 - `jsonb -> idx ->> ''` is always NULL; `jsonb ->> idx` returns the element as text.
 - `pg_catalog.*` is **not** queryable from the SQL Editor (`42P01`). Use `has_function_privilege` and direct calls.
+- plpgsql **exception condition names are single tokens**: `FOREIGN KEY VIOLATION`, `SQLSTATE_VALUE` and
+  `FK_CONSTRAINT_VIOLATION` all raise `42704` (unrecognized name), and a bare `'23503'` raises `42601`. The only
+  accepted spelling is `EXCEPTION WHEN SQLSTATE '23503' THEN` — used inside `delete_category` as the race safety
+  net, so a refused deletion never drops the category row.
+- Changing a column default needs the `SET` keyword: `ALTER TABLE orders ALTER COLUMN expires_at SET DEFAULT
+  now() + interval '30 minutes'` → 201; without `SET` it raises `42601 syntax error at or near "DEFAULT"`.
+  `UPDATE` is `SET … WHERE …` order (the parenthesized `WHERE (…)` form belongs to the `UPDATE t WHERE (…) SET (…)`
+  table-literal variant, not the ordinary one).
 
 ### 1.x SQL execution path (verified 2026-10-24) — do not re-derive
 - The Supabase **SQL Editor in the dashboard never initializes**: the Monaco query pane stays an `svg`
@@ -201,13 +209,17 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   "sleepless-cafe", branch `main (Production)`, plan **FREE**.
 - Publishable (client) key — public by design: `sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD`.
   The service-role/secret key has never been shipped to a browser and must never be.
-- DB (current, re-verified live): `menu_items` **12**, `categories` **4** — category UUIDs
-  `11111111-1111-1111-8333-000000000001..4` (Coffee 1, Non-Coffee 2, Pastries 3, Desserts 4); menu UUIDs
-  `22222222-2222-2222-8333-000000000001..12`, all `image_url` empty. `orders` **6, all `status=served`**
-  — `63242` and `02342` (2026-10-19), `13341` "Gate A Walker", `21574` "Gate A Second", `85063` (staff-role
-  proof, 2026-10-20), `33667` "Maria Santos" (post-fix public-host dogfood, order_id `ad8a1542-bd8a-4a0c-98e9-a016ac604204`)
-  — with `order_items` **6**. No `pending_payment` rows: the unpaid probes (`13977`,
-  `71377`, `90001`) were purged by TTL or voided, which is the designed behaviour, not a bug.
+- DB (current, re-verified live 2026-10-20 after the R9 full-system test): `menu_items` **13** — the 12 visible
+  seed items (`22222222-2222-2222-8333-000000000001..12`, all `image_url` empty) plus one hidden
+  `Test Ristretto R9` (`829e95a7-a7e9-4b4e-99aa-ba3925f52594`, `is_available = false`) parked inside Coffee, which
+  cannot be deleted because a paid order still references it. `categories` **4** — category UUIDs
+  `11111111-1111-1111-8333-000000000001..4`; live `display_order` is **0-based** (Coffee 0, Non-Coffee 1,
+  Pastries 2, Desserts 3) while `sql/05_seed.sql` is 1-based, so a re-seed and the live board differ by one.
+  `orders` **7 completed** (revenue ₱1,165.00, avg ₱166.43) and **0 `pending_payment`** — every R9 probe
+  (`43450` force-expired, `84400`, `97314`) was purged by the TTL sweep or voided, which is the designed
+  behaviour, not a bug. The claim window is now **30 minutes** (`sql/01_schema.sql:74`
+  `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'`); proof from a live order: created
+  `06:16:17.411762Z`, `expires_at` `06:46:17.411762Z` — exactly 30 min, `seconds_remaining` 1786.
 - Auth users (password grant, "Confirm email" OFF → autoconfirm): owner `owner@sleepless-cafe.test`
   (`e5db228e-0041-413f-a0f7-279e1adf5db9`) and staff `staff-gate@sleepless-cafe.test`
   (`3427770d-2f86-479a-b369-ff459e23484e`). The two `staff-probe` users (`890bb2f2-4ee3-45ce-9935-392dd032663d`,
@@ -220,9 +232,10 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
   The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
   both hosts boot with no params at all.
-- Git: `main == origin/main == 1696a96` (`fix(phase-7): align cart columns, guard the name field, credit the
-  footer on menu.html`, pushed `d80b3e6..1696a96`). Working tree clean except the docs pass that added
-  this section.
+- Git: `origin/main == a7ab4bd` (`docs(phase-7)` — pushed) and `main == f637cc8` (`fix(phase-5): delete_category
+  refuses categories referenced by past orders`) — **two local commits ahead, unpushed**: `f9194aa feat(ttl)`
+  (claim window 60 → 30 min) then `f637cc8`. Working tree clean except the docs pass that added this section.
+  Standing rule: the agent never pushes on its own — a push needs an explicit human request.
 
 ---
 
@@ -230,23 +243,23 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 
 | File | State |
 | --- | --- |
-| `sql/01_schema.sql` | Unchanged. 4 tables, 6 indexes incl. partial `orders_live_pending_idx`. No RLS enablement anywhere (by design). |
-| `sql/02_functions.sql` | **Fixed, 579 lines, applied live, call-tested.** 16 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. |
+| `sql/01_schema.sql` | 6,899 B. 4 tables, 6 indexes incl. partial `orders_live_pending_idx`. No RLS enablement anywhere (by design). **Changed 2026-10-20 (`f9194aa`):** line 74 `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'` (was 60) and the header comment at line 8. Live DB moved to match - see sec 8.1. |
+| `sql/02_functions.sql` | **Fixed, 40,035 B, applied live, call-tested.** 16 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. **R9 (`f637cc8`):** `delete_category` gained the `MENU_ITEM_IN_USE` pre-check plus a nested `SQLSTATE '23503'` net - see sec 8.2. |
 | `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 4× `ENABLE ROW LEVEL SECURITY` first, then 10 policy pairs each preceded by `DROP POLICY IF EXISTS`. |
 | `sql/04_realtime.sql` | **Corrected + applied live.** Publication claim replaced with the verified membership+delivery contract; executable `alter publication supabase_realtime add table orders;` added; v4 wire block replaced with the 2.118.0 `.on(...)` surface. |
 | `sql/05_seed.sql` | Applied live, idempotent (`ON CONFLICT (id) DO NOTHING`), no DELETE/TRUNCATE. |
 | `assets/api.js` | 12,895 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 16 fns; `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
-| `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`), 2,044 B.** Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
+| `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`) and 2026-10-20 (`f9194aa`), 2,044 B.** Line 31 now carries `ttlMinutes: 30,` - the client mirror of the DB column default (they must change as a pair, sec 8.1). Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
 | `assets/app.css` | **8,197 B, extended 2026-10-24 three times (`2342c83`, `eab2481`, `1696a96`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity), then `.cart-line` + `.cart-price` (sec 4 D4) which line the amount and the steppers down the cart. Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
-| `menu.html` | **27,472 B, fixed 2026-10-24 three times (`2342c83`, `eab2481`, `1696a96`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
+| `menu.html` | **27,838 B, fixed four times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
-| `owner.html` | 40,991 B, **Phase 5 fix applied**. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
-| `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. |
+| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
+| `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
-| `tests/api.spec.md` | TRANSPORT NOTE added under §1. |
+| `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. |
 | `assets/ui.js` | **Does not exist** and is referenced by no page (only `MASTER_PLAN.md:99`). Deliberate deviation: each page ships its own inline UI, keeping dispatches inside the 1–3 file budget. Do not create dead code. |
 | `Sleepless.html` | Design reference only, never edited. Its dangling `staff.html` link at `:237` is out of scope. |
 
@@ -493,7 +506,10 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-1696a96 fix(phase-7): align cart columns, guard the name field, credit the footer   <- HEAD == origin/main
+f637cc8 fix(phase-5): delete_category refuses categories referenced by past orders   <- HEAD (LOCAL, unpushed)
+f9194aa feat(ttl): claim window 60 -> 30 minutes across backend, client copy and docs   <- also LOCAL
+a7ab4bd docs(phase-7): record the cart column fix, name guard, centered success copy and footer credit  <- origin/main
+1696a96 fix(phase-7): align cart columns, guard the name field, credit the footer
 d80b3e6 docs(phase-7): record the checkout restructure - name above cart, one action button
 eab2481 fix(phase-7): name field above the cart + one place-order action
 b92c7a4 docs(phase-7): record the cart-line controls + visible size selection
@@ -503,9 +519,10 @@ bb58747 docs(phase-7): record the Gate A audit - 4 defects found, 3 fixed
 b62fd2f fix(phase-7): make Pages usable for a first-time visitor
 af1f4de docs: record Phase 7 completion - Gate A met live
 ```
-`main` **== `origin/main`** — the human authorized pushing in this thread, so every commit above is live on
-GitHub Pages. Standing rule for future sessions: the agent does not push on its own — a push needs an explicit
-human request.
+`main` is **two commits ahead of `origin/main`** (`a7ab4bd..f637cc8` unpushed) — the R9 pass was not asked to
+be pushed, so GitHub Pages still serves the `a7ab4bd` tree. A push needs an explicit human request; until then
+the TTL and the `delete_category` refusal exist only in the local tree plus the live DB (both were applied
+directly to the project, so the deployed site will show the new behaviour once pushed).
 `main` **== `origin/main`** — the human pushed `7ea5cb7..cbca447` on 2026-10-20. GitHub Pages rebuilt
 and the live `owner.html` now carries the phase-5 bootstrap fix (`owneremails` 2 hits, `!emails` 1,
 `ownerEmails` 3, `split` 3 — matching `owner.html:97–115` + the gate at `:652`), so the `?owneremails=`
@@ -533,3 +550,67 @@ through the password grant. Probes with **that** JWT:
 Note: the GET form of the two boards answers `25006 cannot execute DELETE in a read-only transaction`
 because they call `purge_expired_orders()`; `api.js` POSTs them, which is the correct form.
 Final counts after the proof: `menu_items` 12, `categories` 4, `orders` 5 (all `served`), `order_items` 5.
+
+---
+
+## 8. R9 - full-system functional test pass (2026-10-20, human request "fully test all functions")
+
+The human asked for: owner category/product creation, the full ordering routine, the claim window moved
+60 → 30 minutes from check-out, everything exercised in the browser, and every found problem resolved.
+All five items are done; two real defects were found and fixed.
+
+### 8.1 TTL 60 → 30 minutes (commit `f9194aa`)
+
+| Side | Change | Evidence |
+| --- | --- | --- |
+| DB authority | `sql/01_schema.sql:74` default is `now() + interval '30 minutes'`; live DB moved with `ALTER TABLE orders ALTER COLUMN expires_at SET DEFAULT now() + interval '30 minutes'` | 201 |
+| Client mirror | `assets/config.js:31` `ttlMinutes: 30` | committed default |
+| Customer copy | `menu.html` `ttlMinutes()` helper renders `within ${ttlMinutes()} minutes` — never a literal | success screen read "Order Placed! … within 30 minutes to process payment." |
+| Landing copy | `index.html:114` / `:154` say 30 minutes (static page, no config bootstrap — documented drift risk) | browser read both |
+| Staff pages | `cashier.html` / `kitchen.html` / `owner.html` need no edit — countdown is server-derived (`seconds_remaining`) | owner claim row rendered `29:49` for a fresh claim |
+
+Live proof: claim `97314` created `06:16:17.411762Z`, `expires_at` `06:46:17.411762Z` — exactly 30 min, `seconds_remaining` 1786.
+**Pairing rule: the column default and `ttlMinutes` must always be changed together.** The client cannot read
+its own order back (RLS blocks anon SELECT on `orders`; `get_order_by_code` is staff-only), so the copy can only
+come from config — a public config table would move the security boundary and is deliberately out of scope.
+
+### 8.2 `delete_category` FK defect (commit `f637cc8`)
+
+"Delete items too" on a category whose items appear in past orders raised a raw PG 409
+(`SQLSTATE 23503`, constraint `order_items_menu_item_id_fkey`, from `sql/01_schema.sql:97` which carries **no**
+`ON DELETE` clause on purpose — paid orders are the permanent sales record). That broke the JSON-envelope
+contract and surfaced as the generic owner error copy. Fix: pre-check + nested `SQLSTATE '23503'` net return
+`MENU_ITEM_IN_USE`; `owner.html` `ERR_COPY` gained "Those items are in past orders - the sales record would
+break. Move them to another category, or hide them." The fallback path (`UPDATE … SET category_id`) cannot
+violate the FK and is unchanged. Wire proof: `delete_category(Coffee, null)` →
+`{"success":false,"error":{"code":"MENU_ITEM_IN_USE"}}`.
+
+**Test lesson:** deleting a category whose items were *never* ordered legitimately succeeds — an early browser
+pass deleted the seed `Desserts` category and 2 items that way. Restore with the original seed ids, and only
+test deletion against a category that IS referenced (Coffee), so the refusal path is the one exercised.
+
+### 8.3 Browser evidence (integrated browser on `localhost:8731`, no headless automation)
+
+- Owner menu builder: created a category, created an item inside it, reordered categories (`Up`/`Down` +
+  `reorder_categories`), edited an item's availability (`Keep`/`Available`/`Hidden`) — hidden item correctly
+  absent from `menu.html` (Coffee rendered 4 cards, not 5).
+- Fresh-visitor ordering routine (`sl_config` and `sl_auth` cleared first): category → size chip → `+` →
+  `Add to Cart` → cart row `Caramel Latte · Regular · ×2  ₱280.00  + − Remove` → name → `Proceed to Checkout`
+  → claim `97314`. Digit name `R9 Tester` rejected with "Names use letters only — no numbers or symbols."
+- Cashier: board empty after cleanup; manual lookup of a force-expired claim answered "Wrong code, or that
+  order's time is up." — the expired path is refused with human copy, and `void_order` on it answers
+  `NOT_VOIDABLE` because the TTL sweep already removed the row.
+- Owner void two-step: `Void claim` → button re-renders `Confirm void` → toast "Claim 84400 voided — the row
+  and its items are gone.", board empty, sales untouched (₱1,165.00 / 7 / ₱166.43).
+- CSV export: "CSV saved to your downloads." The human opened the downloaded file and its contents close the loop
+  exactly: `sales-2026-10-20.csv` rows `10/19/2026 230 2` and `10/20/2026 935 5`, which sum to ₱1,165.00 over
+  7 completed orders - identical to the sales card and to the DB probe. (The spreadsheet app re-styles the
+  ISO `label` column as a locale date; the CSV itself writes `2026-10-19`, which is cosmetic, not a defect.)
+- Cleanup: every probe claim voided/purged; DB back to 4 categories, 13 items (1 hidden), 7 orders, ₱1,165.00,
+  0 live claims.
+
+### 8.4 Still open (not defects)
+
+Phase 8 (Vercel) remains parked by the human's earlier decision; the two local commits above are unpushed, so
+GitHub Pages still serves `a7ab4bd`. `assets/api.js` needed no change for `MENU_ITEM_IN_USE` — the envelope
+passes through `copyFor()` unchanged.
