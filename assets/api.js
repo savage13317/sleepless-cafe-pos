@@ -196,7 +196,10 @@ export async function reorderCategories(newOrder) {
   return await callSql('reorder_categories', { new_order: newOrder });
 }
 export async function deleteCategory(categoryId, fallbackCategoryId) {
-  return await callSql('delete_category', { category_id: categoryId, fallback_category_id: fallbackCategoryId });
+  // SQL parameters are p_-prefixed (delete_category used to raise 42702 "column reference
+  // category_id is ambiguous" - see sql/02_functions.sql). Keys here must match the parameter
+  // names exactly, or PostgREST answers PGRST202 "required parameter missing".
+  return await callSql('delete_category', { p_category_id: categoryId, p_fallback_category_id: fallbackCategoryId });
 }
 export async function createMenuItem(categoryId, name, description, imageUrl, sizesAndPrices, isAvailable) {
   return await callSql('create_menu_item', {
@@ -205,9 +208,11 @@ export async function createMenuItem(categoryId, name, description, imageUrl, si
   });
 }
 export async function updateMenuItem(menuItemId, name, description, imageUrl, sizesAndPrices, isAvailable) {
+  // Keys must match the SQL parameter names, which are p_-prefixed (see sql/02_functions.sql
+  // - bare `name`/`image_url`/... collide with menu_items columns: 42702 at CALL time).
   return await callSql('update_menu_item', {
-    menu_item_id: menuItemId, name, description, image_url: imageUrl,
-    sizes_and_prices: sizesAndPrices, is_available: isAvailable,
+    p_menu_item_id: menuItemId, p_name: name, p_description: description,
+    p_image_url: imageUrl, p_sizes_and_prices: sizesAndPrices, p_is_available: isAvailable,
   });
 }
 

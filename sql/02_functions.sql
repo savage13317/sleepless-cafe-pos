@@ -484,7 +484,7 @@ $$ LANGUAGE plpgsql;
 -- is what satisfies that CHECK: children are reassigned to fallback_category_id
 -- (or deleted when none is given) BEFORE the category row is dropped.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION delete_category (category_id uuid, fallback_category_id uuid DEFAULT NULL)
+CREATE OR REPLACE FUNCTION delete_category (p_category_id uuid, p_fallback_category_id uuid DEFAULT NULL)
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; cat jsonb; fb jsonb;
@@ -493,20 +493,20 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
-  cat := (SELECT jsonb_build_object('category_id', c.id, 'name', c.name) FROM categories AS c WHERE c.id = category_id);
+  cat := (SELECT jsonb_build_object('category_id', c.id, 'name', c.name) FROM categories AS c WHERE c.id = p_category_id);
   IF cat IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CATEGORY_NOT_FOUND', 'message', 'that category is not on the menu')); END IF;
-  IF fallback_category_id IS NOT NULL THEN
-    fb := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = fallback_category_id);
-    IF fb IS NULL OR fallback_category_id = category_id THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_FALLBACK', 'message', 'fallback_category_id must be a different existing category')); END IF;
+  IF p_fallback_category_id IS NOT NULL THEN
+    fb := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = p_fallback_category_id);
+    IF fb IS NULL OR p_fallback_category_id = p_category_id THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_FALLBACK', 'message', 'fallback_category_id must be a different existing category')); END IF;
   END IF;
-  moved := COALESCE((SELECT COUNT(*) FROM menu_items AS m WHERE m.category_id = category_id), 0);
-  IF fallback_category_id IS NOT NULL THEN
-    UPDATE menu_items AS m SET category_id = fallback_category_id WHERE m.category_id = category_id;
+  moved := COALESCE((SELECT COUNT(*) FROM menu_items AS m WHERE m.category_id = p_category_id), 0);
+  IF p_fallback_category_id IS NOT NULL THEN
+    UPDATE menu_items AS m SET category_id = p_fallback_category_id WHERE m.category_id = p_category_id;
   ELSE
-    DELETE FROM menu_items AS m WHERE m.category_id = category_id;
+    DELETE FROM menu_items AS m WHERE m.category_id = p_category_id;
   END IF;
-  DELETE FROM categories AS c WHERE c.id = category_id;
-  RETURN jsonb_build_object('success', true, 'data', cat || jsonb_build_object('items_moved', moved, 'items_deleted', CASE WHEN fallback_category_id IS NULL THEN moved ELSE 0 END, 'fallback_category_id', fallback_category_id), 'error', NULL);
+  DELETE FROM categories AS c WHERE c.id = p_category_id;
+  RETURN jsonb_build_object('success', true, 'data', cat || jsonb_build_object('items_moved', moved, 'items_deleted', CASE WHEN p_fallback_category_id IS NULL THEN moved ELSE 0 END, 'fallback_category_id', p_fallback_category_id), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
 -- ----------------------------------------------------------------------------
@@ -543,7 +543,7 @@ $$ LANGUAGE plpgsql;
 -- update_menu_item :: COALESCE patch. '' or null means leave as is for the text
 -- fields, null keeps sizes_and_prices, null is_available keeps the current flag.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION update_menu_item (menu_item_id uuid, name text DEFAULT '', description text DEFAULT '', image_url text DEFAULT '', sizes_and_prices jsonb DEFAULT NULL, is_available boolean DEFAULT NULL)
+CREATE OR REPLACE FUNCTION update_menu_item (p_menu_item_id uuid, p_name text DEFAULT '', p_description text DEFAULT '', p_image_url text DEFAULT '', p_sizes_and_prices jsonb DEFAULT NULL, p_is_available boolean DEFAULT NULL)
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; current jsonb; patched jsonb;
@@ -553,25 +553,25 @@ BEGIN
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   current := (SELECT jsonb_build_object('name', m.name, 'description', m.description, 'image_url', m.image_url,
                                         'sizes_and_prices', m.sizes_and_prices, 'is_available', m.is_available)
-               FROM menu_items AS m WHERE m.id = menu_item_id);
+               FROM menu_items AS m WHERE m.id = p_menu_item_id);
   IF current IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_NOT_FOUND', 'message', 'that item is not on the menu')); END IF;
   -- '' (or null) means "keep the current name", so the length CHECK only applies
   -- when a name was actually supplied. Validating the blank default would make
   -- every patch call fail.
-  IF NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-     AND LENGTH(TRIM(name)) > 120 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEM_NAME', 'message', 'item name must be 1-120 characters')); END IF;
-  IF sizes_and_prices IS NOT NULL AND (jsonb_typeof(sizes_and_prices) <> 'array' OR jsonb_array_length(sizes_and_prices) < 1) THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZES', 'message', 'sizes_and_prices must be a non-empty array or null to keep')); END IF;
+  IF NULLIF(TRIM(COALESCE(p_name, '')), '') IS NOT NULL
+     AND LENGTH(TRIM(p_name)) > 120 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEM_NAME', 'message', 'item name must be 1-120 characters')); END IF;
+  IF p_sizes_and_prices IS NOT NULL AND (jsonb_typeof(p_sizes_and_prices) <> 'array' OR jsonb_array_length(p_sizes_and_prices) < 1) THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZES', 'message', 'sizes_and_prices must be a non-empty array or null to keep')); END IF;
   UPDATE menu_items AS m
-    SET name = COALESCE(NULLIF(TRIM(COALESCE(name, '')), ''), m.name),
-        description = CASE WHEN COALESCE(description, '') = '' THEN m.description ELSE description END,
-        image_url = CASE WHEN COALESCE(image_url, '') = '' THEN m.image_url ELSE image_url END,
-        sizes_and_prices = COALESCE(sizes_and_prices, m.sizes_and_prices),
-        is_available = COALESCE(is_available, m.is_available)
-    WHERE m.id = menu_item_id;
+    SET name = COALESCE(NULLIF(TRIM(COALESCE(p_name, '')), ''), m.name),
+        description = CASE WHEN COALESCE(p_description, '') = '' THEN m.description ELSE p_description END,
+        image_url = CASE WHEN COALESCE(p_image_url, '') = '' THEN m.image_url ELSE p_image_url END,
+        sizes_and_prices = COALESCE(p_sizes_and_prices, m.sizes_and_prices),
+        is_available = COALESCE(p_is_available, m.is_available)
+    WHERE m.id = p_menu_item_id;
   patched := (SELECT jsonb_build_object('menu_item_id', m.id, 'category_id', m.category_id, 'name', m.name,
                                         'description', m.description, 'image_url', m.image_url,
                                         'sizes_and_prices', m.sizes_and_prices, 'is_available', m.is_available)
-               FROM menu_items AS m WHERE m.id = menu_item_id);
+               FROM menu_items AS m WHERE m.id = p_menu_item_id);
   RETURN jsonb_build_object('success', true, 'data', patched, 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
