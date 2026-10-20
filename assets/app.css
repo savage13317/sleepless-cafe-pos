@@ -125,23 +125,48 @@ body {
   font-weight: 700;
 }
 
-/* --- Phase 7: cart line columns (menu.html) -----------------------------
+/* --- Phase 7 (later passes): cart line columns (menu.html, cashier.html) ---
    The row was flex + justify-between, which spreads the leftover space BETWEEN
    items — so the amount and the +/− buttons landed at a different x on every
    line and nothing lined up down the cart. A plain `auto` grid does not fix it
    either: every row is its own grid, so each row sized its own amount column
    and the steppers drifted 7px. The amount column therefore gets a minimum
    track and the number is pushed to the END of it, which puts every amount
-   flush at the same x and keeps the two stepper columns straight underneath.
+   flush at the same x and keeps the stepper columns straight underneath.
+   The R10 pass moved the quantity BETWEEN the two steppers - name, amount, +,
+   quantity, −, Remove - so the number a customer is about to change sits under
+   the finger that changes it instead of trailing the item name. The quantity
+   track needs the same minimum track as the amount: it is its own column in
+   every row, so a one-digit qty would otherwise pull the − left on short rows.
    The name column (1fr) absorbs the leftover. No brand color here — layout. */
 .cart-line {
   display: grid;
-  grid-template-columns: 1fr minmax(6.5rem, auto) auto auto auto;
+  grid-template-columns: 1fr minmax(6.5rem, auto) auto minmax(2.25rem, auto) auto auto;
   align-items: center;
   column-gap: 0.75rem;
 }
 .cart-price {
   justify-self: end;
+}
+.cart-qty {
+  /* the number between + and −: centered in its minimum track so the steppers
+     keep an even gap on either side of it */
+  justify-self: center;
+  font-weight: 700;
+}
+
+/* --- Phase 7 (R10 pass): cashier board viewport (cashier.html) ------------
+   Ten unpaid claims is roughly what a counter terminal can show at once, so the
+   table is capped at ten data rows and the container scrolls instead of the
+   page growing to a hundred rows. A board row measures 34px at the shipped
+   type scale, so the cap is eleven rows of that (ten claims plus the header):
+   11 x 34 = 374px = 23.4rem, rounded up to 23.5rem. The scrollbar itself is
+   styled above in this file, so the board scrolls like the rest of the app.
+   No brand color here — layout. */
+.board-scroll {
+  max-height: 23.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* --- Phase 3: cashier countdown status pair ------------------------------ */
@@ -191,4 +216,6 @@ body {
     border: 1px solid #ccc !important;
   }
   .print-full { width: 100% !important; max-width: none !important; }
+  /* a scroll clip would cut rows off the printed board, so print opens it */
+  .board-scroll { max-height: none !important; overflow: visible !important; }
 }

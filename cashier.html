@@ -92,9 +92,15 @@
     <!-- VOID ACTION — DELIBERATELY OMITTED (by design, not by missing data).
          listActivePending() DOES hand back order_id (sql/02_functions.sql), so a
          Void button could be wired here — it isn't, because void_order is a
-         manager decision, not a cashier one: the cashier's only write is
-         confirm_payment. The owner dashboard owns voiding. Nothing on this page
-         calls voidOrder, and no id is ever invented here. -->
+         manager decision, not a cashier one. What the cashier MAY write is its
+         own claim: confirm_payment, plus the pre-payment edits set_claim_item_qty
+         and add_claim_item (sql/02_functions.sql), which reprice the claim the
+         cashier just looked up. Those edits stop at the payment boundary — this
+         page never voids, marks served, or touches a claim that is already paid.
+         The owner dashboard owns voiding. Nothing here calls voidOrder, and no
+         id is ever invented here: the id comes from the board row or claim_view.
+         The one edit deliberately refused is dropping the last line of a claim
+         (LAST_LINE_ONLY) — an empty claim is a void, which is the owner's call. -->
 
     <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
         <p class="text-brand-muted text-xs">
@@ -132,7 +138,8 @@
 </script>
 
 <script type="module">
-    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
+    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, getMenu,
+            getClaimView, setClaimItemQty, addClaimItem, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
 
     /* --- state ----------------------------------------------------------- */
     let rows = [];              // live unpaid claims from listActivePending()
@@ -140,6 +147,13 @@
     let toast = null;           // {msg, until} — transient success line
     let boardError = null;      // error code from the last board poll
     let staffEmail = null;      // email of the signed-in staff session
+    let menu = [];              // available catalogue, for the Add-to-claim panel
+    /* One claim is edited at a time. A double tap on + or Remove would otherwise
+       fire two edits, and the second would be applied to a line the first edit
+       may already have moved - the same glitch that put two orders through from
+       the customer cart. */
+    let claimBusy = false;
+    let claimNote = null;       // last refused claim edit, shown on the card
 
     /* Codes are STRINGS end-to-end: leading zeros are significant, so a code is
        never passed through Number(). */
@@ -159,6 +173,10 @@
         ORDER_EXPIRED: "This order's time is up, please place a new one",
         NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
         ORDER_NOT_FOUND: NOT_FOUND,
+        CLAIM_NOT_OPEN: "That claim isn't open any more — look the code up again before changing it.",
+        LINE_NOT_FOUND: "That line isn't on the claim any more — the board was refreshed.",
+        INVALID_QTY: "That quantity doesn't work — between 1 and 999, or Remove to drop the line.",
+        LAST_LINE_ONLY: "That's the only line left, so it can't be removed — void the claim instead of ordering nothing.",
         NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
         HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening let the barista know.",
     };
@@ -217,20 +235,81 @@
         const note = boardError
             ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
             : '';
+        /* A counter terminal can read about ten claims at a glance, so past that
+           the board scrolls inside its own card (assets/app.css .board-scroll)
+           instead of turning the page into a hundred-row column. The note only
+           appears when there IS more to scroll to. */
+        const scrollNote = rows.length > 10
+            ? `<p class="text-brand-muted text-xs mt-2">All ${rows.length} unpaid claims are listed — scroll the board to reach the ones past the first screen.</p>`
+            : '';
         return `<div class="glass-card rounded-xl p-4 mt-4 overflow-x-auto">
-                <table class="w-full border-collapse">
-                  <tbody>${head}${body || empty}</tbody>
-                </table>
+                <div class="board-scroll">
+                  <table class="w-full border-collapse">
+                    <tbody>${head}${body || empty}</tbody>
+                  </table>
+                </div>
+                ${scrollNote}
                 ${note}
               </div>`;
     }
 
     /* --- lookup views ---------------------------------------------------- */
+    /* THE CLAIM CARD IS THE CUSTOMER CART, re-dressed for the counter: it uses
+       the same .cart-line grid from assets/app.css, so a cashier reads a claim
+       exactly the way a customer read their own order - name, amount, +,
+       quantity, −, Remove. Two identities make the edits possible: the card
+       carries order_id and each line carries the order_items row id, which is
+       the only stable handle for addressing ONE line (item_name + size is not,
+       since a claim can hold the same item twice under different sizes).
+       Every number on the card is the server's: an edit repaints from the
+       claim_view envelope the SQL returns, which carries the recomputed total,
+       so the counter never prices a line itself. */
+    function renderClaimLine(r) {
+        return `<div class="cart-line py-1 border-b border-brand-border/40"
+                    data-claim-line data-claim-item="${esc(r.item_id)}" data-claim-qty="${esc(r.quantity ?? 0)}">
+                    <span class="text-brand-cream text-sm">${esc(r.item_name ?? '')} · ${esc(r.size ?? '')}</span>
+                    <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(r.subtotal)}</span>
+                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="1">+</button>
+                    <span class="cart-qty text-brand-cream font-mono text-sm">${Number(r.quantity ?? 0)}</span>
+                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="-1">−</button>
+                    <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-claim-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
+                  </div>`;
+    }
+
+    /* Add to this claim: the counter can put something on a claim that the
+       customer forgot. Only available catalogue items are offered here, and
+       nothing on this page prices them - add_claim_item pulls unit_price out
+       of menu_items itself, so a stale panel can name a size but never invent
+       an amount. */
+    function renderAddPanel() {
+        if (!menu.length) {
+            return `<p class="text-brand-muted text-xs mt-2">The menu could not be loaded on this terminal, so this claim can be adjusted but not added to.</p>`;
+        }
+        const chips = menu.map((m) => {
+            const sizes = (m.sizes_and_prices ?? []).map((s) =>
+                `<button class="size-chip rounded-md text-xs" data-claim-add data-claim-menu="${esc(m.id)}" data-claim-size="${esc(s.size)}">${esc(s.size)}</button>`).join('');
+            if (!sizes) return '';
+            return `<div class="flex items-center gap-2 flex-wrap my-1">
+                    <span class="text-brand-cream text-sm whitespace-nowrap">${esc(m.name)}</span>
+                    <span class="flex gap-2 flex-wrap">${sizes}</span>
+                  </div>`;
+        }).join('');
+        return `<div class="rounded-lg p-3 bg-brand-card/40 border border-brand-border/40 mt-3">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add to this claim — tap a size</p>
+                ${chips}
+              </div>`;
+    }
+
     function renderFound() {
         const l = lookup;
         const secs = Math.max(0, Math.floor(Number(l.seconds_remaining) || 0));
         const status = secs < 120 ? 'status-lastcall' : 'status-live';
-        return `<div class="glass-card rounded-xl p-6 my-4" data-order-card data-code="${esc(l.code)}">
+        const lines = (l.items ?? []).map(renderClaimLine).join('');
+        const note = claimNote
+            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[claimNote] ?? ERR_COPY.HTTP}</p>`
+            : '';
+        return `<div class="glass-card rounded-xl p-6 my-4"
+                    data-order-card data-code="${esc(l.code)}" data-order-id="${esc(l.order_id)}">
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Claim on the board</p>
                 <div class="font-mono text-brand-accentLight text-4xl tracking-widest" style="letter-spacing:0.3em">${esc(l.code)}</div>
                 <p class="text-brand-cream text-lg font-serif mt-2">${esc(l.name)}</p>
@@ -240,6 +319,10 @@
                   <span class="text-brand-muted text-xs uppercase tracking-wider">${Number(l.items_count ?? 0)} item${Number(l.items_count ?? 0) === 1 ? '' : 's'}</span>
                   <span class="font-mono text-brand-accentLight">${fmtPeso(l.total_amount)}</span>
                 </div>
+                ${note}
+                <p class="text-brand-accent text-xs uppercase tracking-wider mt-4">On this claim · tap + or − beside the number, Remove to drop a line</p>
+                ${lines}
+                ${renderAddPanel()}
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-confirm>Confirm Payment</button>
               </div>`;
     }
@@ -275,8 +358,11 @@
         const res = await listActivePending();
         if (!res.success) { boardError = res.error?.code ?? 'HTTP'; return; }
         boardError = null;
+        /* The order is the SERVER's, not ours. list_active_pending returns claims
+           A-Z by customer name (newest first within a name), and re-sorting here
+           used to overwrite that with newest-first — so the board jumped around
+           every time a claim was placed. Keep whatever the server handed back. */
         rows = (res.data || []).filter((r) => Number(r.seconds_remaining) > 0);
-        rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))); // newest first
     }
 
     /* --- code lookup: shape-checked client-side, so a mistyped scan never
@@ -294,22 +380,69 @@
             return paint();
         }
         const d = res.data || {};
-        lookup = {
+        lookup = claimFromView(d, d.order_id ?? '');
+        claimNote = null;
+        paint();
+    }
+
+    /* --- claim edits + payment ------------------------------------------- */
+    /* claim_view is the single shape get_order_by_code, set_claim_item_qty and
+       add_claim_item all return, so one builder turns any of them into the
+       card's state. items[] carries the order_items row ids the lines address
+       themselves by. */
+    function claimFromView(d, orderId) {
+        return {
             kind: 'found',
-            code: String(d.code ?? code),
+            order_id: String(d.order_id ?? orderId ?? ''),
+            code: String(d.code ?? ''),
             name: d.customer_name ?? '',
             created_at: d.created_at,
             seconds_remaining: d.seconds_remaining,
             items_count: d.items_count,
             total_amount: d.total_amount,
+            items: d.items ?? [],
         };
+    }
+
+    /* An edit repaints from SERVER truth, never from what the tap intended:
+       set_claim_item_qty and add_claim_item both hand back the whole claim with
+       the total recomputed, so the card and the board row can never disagree. */
+    async function applyClaim(orderId, res) {
+        if (!res.success) {
+            claimNote = res.error?.code ?? 'HTTP';   /* claim untouched, say why */
+        } else {
+            const d = res.data || {};
+            if (!d.order_id) { claimNote = 'CLAIM_NOT_OPEN'; }
+            else { lookup = claimFromView(d, orderId); claimNote = null; }
+        }
+        await refreshBoard();
         paint();
+    }
+
+    async function editClaimQty(orderId, itemId, quantity) {
+        if (claimBusy || !orderId || !itemId) return;
+        claimBusy = true;
+        const res = await setClaimItemQty(orderId, itemId, quantity);
+        claimBusy = false;
+        await applyClaim(orderId, res);
+    }
+    async function addClaimLine(orderId, menuItemId, size) {
+        if (claimBusy || !orderId || !menuItemId || !size) return;
+        claimBusy = true;
+        const res = await addClaimItem(orderId, menuItemId, size, 1);
+        claimBusy = false;
+        await applyClaim(orderId, res);
     }
 
     /* --- payment: on success the row must already be gone when we repaint,
          so the board is re-read before painting. ------------------------ */
     async function pay(code) {
+        /* One confirm per tap: a double tap must not fire a second confirm,
+           which would put the same claim through to the kitchen twice. */
+        if (claimBusy) return;
+        claimBusy = true;
         const res = await confirmPayment(code);
+        claimBusy = false;
         if (res.success) {
             lookup = null;
             toast = { msg: PAID_COPY, until: Date.now() + 6000 };
@@ -330,6 +463,33 @@
         else if (t.dataset.lookup !== undefined) {
             const input = document.querySelector('[data-code-input]');
             void lookupCode(input ? input.value : '');
+        }
+        /* Claim edits. The line is addressed by its order_items row id, which
+           the row itself carries, and the card carries order_id. The only thing
+           computed here is the next quantity - the server re-validates it, so a
+           stale DOM number can never write a wrong amount. */
+        else if (t.dataset.claimQty !== undefined) {
+            const card = t.closest('[data-order-card]');
+            const line = t.closest('[data-claim-line]');
+            if (card?.dataset.orderId && line?.dataset.claimItem) {
+                void editClaimQty(card.dataset.orderId, line.dataset.claimItem,
+                    Number(line.dataset.claimQty) + Number(t.dataset.claimQty));
+            }
+        }
+        else if (t.dataset.claimRemove !== undefined) {
+            const card = t.closest('[data-order-card]');
+            const line = t.closest('[data-claim-line]');
+            if (card?.dataset.orderId && line?.dataset.claimItem) {
+                /* Remove is quantity 0: the SQL deletes the line, and refuses
+                   only when it would leave the claim with nothing on it. */
+                void editClaimQty(card.dataset.orderId, line.dataset.claimItem, 0);
+            }
+        }
+        else if (t.dataset.claimAdd !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card?.dataset.orderId && t.dataset.claimMenu && t.dataset.claimSize) {
+                void addClaimLine(card.dataset.orderId, t.dataset.claimMenu, t.dataset.claimSize);
+            }
         }
     });
 
@@ -373,6 +533,11 @@
         document.getElementById('staffid').textContent = staffEmail;
 
         openCodeInput();
+        /* The Add-to-claim panel needs the catalogue. menu_items carry a public
+           READ policy (sql/03_rls.sql), so this read can never fail the board -
+           a failed load only leaves the panel with a line saying so. */
+        const cat = await getMenu();
+        if (cat.success) menu = (cat.data || []).filter((m) => m.is_available === true);
         await refreshBoard();
         paint();
         setInterval(async () => { await refreshBoard(); paint(); }, 5000);

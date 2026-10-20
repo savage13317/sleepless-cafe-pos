@@ -252,9 +252,10 @@
                drifted to a different x on every row. Grid columns line them up. */
             return `<div class="cart-line py-1 border-b border-brand-border/40"
                     data-cart-line data-cart-id="${esc(r.itemId)}" data-cart-size="${esc(r.size)}">
-                <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)} · ×${r.qty}</span>
+                <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)}</span>
                 <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(price * r.qty)}</span>
                 <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="1">+</button>
+                <span class="cart-qty text-brand-cream font-mono text-sm">${r.qty}</span>
                 <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="-1">−</button>
                 <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-cart-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
               </div>`;
@@ -262,7 +263,7 @@
         return `<div class="glass-card rounded-xl p-4 mt-4">
             <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Your cart · ${count} item${count === 1 ? '' : 's'}</p>
             ${lines}
-            <p class="text-brand-muted text-xs mt-1">Tap − to take one out, Remove to drop the line.</p>
+            <p class="text-brand-muted text-xs mt-1">The number between + and − is how many you have. Tap + or − to change it, Remove to drop the line.</p>
             <p class="text-brand-accentLight font-mono text-sm mt-2">Total ${fmtPeso(total)}</p>
             <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-checkout>Proceed to Checkout</button>
           </div>`;
@@ -311,16 +312,33 @@
     }
 
     /* --- checkout flow --------------------------------------------------- */
+    /* A double tap on Proceed to Checkout used to place TWO identical orders:
+       the cart was only emptied AFTER the await, so the second click still saw
+       the same cart and fired a second create_order. Two guards now, and they
+       are both synchronous - they run before anything is sent, which is the
+       only place a second click can be seen. */
+    let placing = false;
+
     async function checkout() {
-        const items = [...cart.values()].map((r) => ({
+        const rows = [...cart.values()];
+        if (!rows.length) {
+            return { success: false, error: { code: 'INVALID_ITEMS', message: 'cart is empty' } };
+        }
+        const items = rows.map((r) => ({
             menu_item_id: r.itemId, size: r.size, quantity: r.qty,
         }));
+        /* The cart is emptied BEFORE the request, not after it. A second click
+           that arrives while this one is in flight therefore finds an empty cart
+           instead of a duplicate. */
+        const snapshot = cart;
+        cart = new Map();
         const res = await createOrder(pendingName, items);
         if (res.success) {
             const d = res.data || {};
             /* code stays a string end-to-end; never Number() it. */
             orderResult = { code: String(d.claim_code ?? d.code ?? ''), name: pendingName };
-            cart = new Map();   // second order starts fresh
+        } else {
+            cart = snapshot;   /* nothing was placed - put the order back to fix */
         }
         return res;
     }
@@ -454,7 +472,13 @@
     }
 
     async function runCheckout() {
+        /* A double tap is a mis-tap, not a second order: the first tap already
+           owns the request, so the second is swallowed in silence - an error
+           card for a tap the customer never meant would only frighten them. */
+        if (placing) return;
+        placing = true;
         const res = await checkout();
+        placing = false;
         if (res.success) {
             document.getElementById('namefield').innerHTML = '';
         }
