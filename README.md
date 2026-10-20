@@ -23,7 +23,7 @@ The three staff pages are unlisted and unguessable from the public customer page
 ## The two-tier record (core invariant)
 
 - **Unpaid is disposable.** An order lives only as a live claim. If the customer
-  has not presented its 5-digit code to the cashier within **60 minutes**, the row
+  has not presented its 5-digit code to the cashier within **30 minutes**, the row
   is **physically deleted** from `orders` and its `order_items` children cascade
   away (`ON DELETE CASCADE`). No `expired` tombstone — the database forgets the
   customer entirely.
@@ -31,7 +31,7 @@ The three staff pages are unlisted and unguessable from the public customer page
   enters the pipeline (`paid → preparing → served`) and is **never deleted and
   never aged out** — it is the permanent sales record every analytics query reads.
 
-So `orders` always means exactly: **live unpaid claims (≤60 min old) + the full
+So `orders` always means exactly: **live unpaid claims (≤30 min old) + the full
 history of paid sales.** `status` enum is only `pending_payment · paid · preparing
 · served`; `expired` and `cancelled` do not exist. `purge_expired_orders()` is the
 single `DELETE` path in the codebase and can never match a paid row.
@@ -168,7 +168,7 @@ the browser.
 - [ ] Config resolves to the committed public defaults (`assets/config.js` carries the real URL + publishable key); nothing secret is committed — `?sburl=&sbkey=` is an optional override only
 - [ ] No dead request on load: all five pages declare `<link rel="icon" href="assets/favicon.svg">`, so `/favicon.ico` is never requested and 404'd
 - [ ] End-to-end dogfood on a phone: place order → cashier confirms → kitchen serves → owner analytics shows it
-- [ ] TTL proven by deletion, not hiding: place an unpaid order, wait past 60 min, then `SELECT` its code in the Supabase Dashboard → **no row**, and `order_items` count for that `order_id` → **0**
+- [ ] TTL proven by deletion, not hiding: place an unpaid order, wait past 30 min, then `SELECT` its code in the Supabase Dashboard → **no row**, and `order_items` count for that `order_id` → **0**
 - [ ] Permanence proven: a `paid` order survives 10 consecutive sweep calls and still appears in analytics
 - [ ] `Sleepless.html` untouched (governance: do not refactor unrelated files)
 

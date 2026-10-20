@@ -5,7 +5,7 @@
 --            02+ assume these exact names, types and indexes already exist)
 --
 -- CORE INVARIANT:
---   orders = live unpaid claims (still inside their <= 60 min window)
+--   orders = live unpaid claims (still inside their <= 30 min window)
 --          + complete history of paid sales
 --   There is NO "expired" and NO "cancelled" status value. Expiry and voiding
 --   are physical DELETEs, never status transitions - so the paid history can
@@ -71,7 +71,7 @@ CREATE TABLE orders
     CHECK (status IN ('pending_payment', 'paid', 'preparing', 'served')),
   total_amount numeric(10,2) NOT NULL DEFAULT 0 CHECK (total_amount >= 0),
   created_at timestamptz NOT NULL DEFAULT now(),
-  expires_at timestamptz NOT NULL DEFAULT now() + interval '60 minutes',
+  expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes',
   paid_at timestamptz,
   served_at timestamptz,
   fulfillment_time_seconds integer CHECK (fulfillment_time_seconds >= 0),

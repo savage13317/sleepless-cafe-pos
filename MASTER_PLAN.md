@@ -12,16 +12,16 @@ One repository, four static HTML entry points, one Supabase project as the entir
 ```
 Customer ──creates──▶ orders(pending_payment) ──cashier confirms──▶ paid ──kitchen serves──▶ served
                           │                                            │
-                          └── 60 min TTL ──▶ ROW DELETED               └── fulfillment_time_seconds
+                          └── 30 min TTL ──▶ ROW DELETED               └── fulfillment_time_seconds
 Owner reads everything (analytics + menu builder) ── protected by Supabase Auth + RLS
 ```
 
 ### The two-tier record — this is the core invariant
 
-- **Unpaid is disposable.** An order exists only as a live claim. If the customer has not presented the code to the cashier within 60 minutes, the row is **physically deleted** from `orders`, and its `order_items` children go with it via `ON DELETE CASCADE`. There is no `expired` tombstone, no archived junk, no hidden rows. The database forgets the customer entirely.
+- **Unpaid is disposable.** An order exists only as a live claim. If the customer has not presented the code to the cashier within 30 minutes, the row is **physically deleted** from `orders`, and its `order_items` children go with it via `ON DELETE CASCADE`. There is no `expired` tombstone, no archived junk, no hidden rows. The database forgets the customer entirely.
 - **Paid is permanent.** The instant the cashier confirms, the order enters the pipeline (`paid → preparing → served`) and is **never deleted and never aged out**. It is the permanent sales record that every analytics query reads. `served` is terminal-but-retained, not archived-and-removed.
 
-So the `orders` table has exactly one meaning at all times: **live unpaid claims (≤60 min old) + the complete history of paid sales.**
+So the `orders` table has exactly one meaning at all times: **live unpaid claims (≤30 min old) + the complete history of paid sales.**
 
 Order lifecycle (the single state machine every page must agree on):
 
@@ -32,7 +32,7 @@ stateDiagram-v2
     paid --> preparing: optional manual hold
     paid --> served: mark_served() [kitchen]
     preparing --> served: mark_served()
-    pending_payment --> X: purge_expired_orders() — DELETE row (60 min TTL)
+    pending_payment --> X: purge_expired_orders() — DELETE row (30 min TTL)
     pending_payment --> X: void_order() [cashier void, same path]
     served --> [*]: retained forever in the sales record
 
@@ -173,7 +173,7 @@ export const CONFIG = {
   sbUrl: (window.SL_CONFIG?.sbUrl) || _LS?.sbUrl || 'https://epldhypmhpxkebtiidsc.supabase.co',
   sbKey: (window.SL_CONFIG?.sbKey) || _LS?.sbKey || 'sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD',
   ownerEmails: ((window.SL_CONFIG?.ownerEmails || _LS?.ownerEmails || '').split(',')).filter(Boolean),
-  ttlMinutes: 60,
+  ttlMinutes: 30,
 };
 ```
 
@@ -205,7 +205,7 @@ Every function below is the single entry point for a state transition; pages cal
 
 | Function | Called by | Effect |
 |---|---|---|
-| `create_order(name, items jsonb) → {code, order_id, total}` | menu | Inserts `orders` + `order_items`, generates unique 5-digit code (retry loop on UNIQUE violation), sets `expires_at = NOW()+60min` |
+| `create_order(name, items jsonb) → {code, order_id, total}` | menu | Inserts `orders` + `order_items`, generates unique 5-digit code (retry loop on UNIQUE violation), sets `expires_at = NOW()+30min` |
 | `get_order_by_code(code) → order + items` | cashier | Exact lookup on `pending_payment` only. `null` means "wrong code **or** expired" — deliberately indistinguishable, because an expired row no longer exists to distinguish it from |
 | `list_active_pending() → rows` | cashier | Calls `purge_expired_orders()` first, then returns `status='pending_payment'` |
 | `purge_expired_orders() → int` | cashier, kitchen | **`DELETE`** where `status='pending_payment' AND expires_at < NOW()`. The only DELETE path in the codebase. Returns rows removed |
@@ -240,8 +240,8 @@ Reuse, do not reinvent: `brand.dark #140c08`, `brand.card #221610`, `brand.accen
 
 | Page | Layout target | Specific requirements |
 |---|---|---|
-| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, **size chips where the selected one is visibly marked — filled chip + check icon + `aria-label`, never color alone**, ₱price, `+`/`−` stepper for the NEXT add, Add to Cart); cart drawer with itemized totals — **every cart line carries its own `+` / `−` / `Remove` controls and `−` at ×1 deletes the line**; the **Full Name field sits ABOVE the cart** (its own block, repainted independently of the menu) and **`Proceed to Checkout` is the single place-order action — it reads that field, refuses a blank name with a visible line above the field, and only then sends**; success screen shows code + name + 60-min instruction verbatim from spec — **the instruction paragraph is centered (`mx-auto` + `text-center`)**; **cart rows are a grid (`.cart-line`), not flex, with the amount flush at one x (`minmax(6.5rem, auto)` + `justify-self: end`) and the two stepper columns straight underneath**; the name guard is **letters-only (`/^\p{L}\p{L} '\-]*$/u`) with a two-letter minimum**, so digits and symbols never reach the counter; footer carries `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
-| `cashier.html` | Desktop/tablet, `max-w-7xl` | Big code-input field (typed or scanned), instant lookup; live unpaid table columns exactly: Code · Customer Name · Time Created · Time Remaining · No. of Items/Drinks · Total Amount; Confirm Payment button. Rows **vanish** at 60 min (Realtime `DELETE` or a re-purged poll — identical result). Under 2 min remaining the row turns red and reads **LAST CALL**, since the next click may already be past the deadline |
+| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, **size chips where the selected one is visibly marked — filled chip + check icon + `aria-label`, never color alone**, ₱price, `+`/`−` stepper for the NEXT add, Add to Cart); cart drawer with itemized totals — **every cart line carries its own `+` / `−` / `Remove` controls and `−` at ×1 deletes the line**; the **Full Name field sits ABOVE the cart** (its own block, repainted independently of the menu) and **`Proceed to Checkout` is the single place-order action — it reads that field, refuses a blank name with a visible line above the field, and only then sends**; success screen shows code + name + 30-min instruction verbatim from spec — **the instruction paragraph is centered (`mx-auto` + `text-center`)**; **cart rows are a grid (`.cart-line`), not flex, with the amount flush at one x (`minmax(6.5rem, auto)` + `justify-self: end`) and the two stepper columns straight underneath**; the name guard is **letters-only (`/^\p{L}\p{L} '\-]*$/u`) with a two-letter minimum**, so digits and symbols never reach the counter; footer carries `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
+| `cashier.html` | Desktop/tablet, `max-w-7xl` | Big code-input field (typed or scanned), instant lookup; live unpaid table columns exactly: Code · Customer Name · Time Created · Time Remaining · No. of Items/Drinks · Total Amount; Confirm Payment button. Rows **vanish** at 30 min (Realtime `DELETE` or a re-purged poll — identical result). Under 2 min remaining the row turns red and reads **LAST CALL**, since the next click may already be past the deadline |
 | `kitchen.html` | KDS: high contrast, large text, tap targets ≥ 48px | Cards sorted by `paid_at`; shows name + code + paid time + **live elapsed counter**; itemized list with sizes; Mark as Served button; card leaves view |
 | `owner.html` | Tabbed admin | Tab1 Sales (daily/monthly/yearly + revenue/orders/AOV + export CSV) · Tab2 Turnover (avg fulfillment, peak-hour heatmap) · Tab3 Menu builder (image upload → Storage, dynamic size/price pairs) · Tab4 Category create/reorder/delete |
 
@@ -310,10 +310,10 @@ and `localStorage` cleared, is green — see HANDOFF §4 D2 for the audit and th
 
 The system is "perfect" (the gate for Vercel) when and only when:
 
-1. a real customer on a phone can place an order that a real cashier pays and a real kitchen serves within 60 minutes;
+1. a real customer on a phone can place an order that a real cashier pays and a real kitchen serves within 30 minutes;
 2. the order is invisible to every other customer;
 3. the owner can see it in analytics and edit the menu that produced it;
-4. an unpaid order past 60 minutes is **provably deleted** — `SELECT` on its code returns nothing in the Supabase Dashboard and its `order_items` cascade to zero, so it is absent from the cashier table, the kitchen queue, and every analytics number;
+4. an unpaid order past 30 minutes is **provably deleted** — `SELECT` on its code returns nothing in the Supabase Dashboard and its `order_items` cascade to zero, so it is absent from the cashier table, the kitchen queue, and every analytics number;
 5. a paid order is **provably permanent** — it survives any number of TTL sweeps and remains in the sales record forever.
 
 Everything else is polish.

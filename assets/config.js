@@ -28,5 +28,5 @@ export const CONFIG = {
   sbUrl: (window.SL_CONFIG?.sbUrl) || _LS?.sbUrl || 'https://epldhypmhpxkebtiidsc.supabase.co',
   sbKey: (window.SL_CONFIG?.sbKey) || _LS?.sbKey || 'sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD',
   ownerEmails: ((window.SL_CONFIG?.ownerEmails || _LS?.ownerEmails || '').split(',')).filter(Boolean),
-  ttlMinutes: 60,
+  ttlMinutes: 30,
 };

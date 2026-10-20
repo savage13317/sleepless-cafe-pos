@@ -143,7 +143,7 @@ BEGIN
     code_uuid := gen_random_uuid();
     new_code := lpad((('x' || SUBSTR(code_uuid::text, 1, 8))::bit(32)::bigint % 100000)::text, 5, '0');
     BEGIN
-      -- status and expires_at take the column defaults: pending_payment, now()+60min
+      -- status and expires_at take the column defaults: pending_payment, now()+30min
       INSERT INTO orders (id, code, customer_name, total_amount) VALUES (new_order_id, new_code, cname, total);
       inserted := true;
       EXIT;

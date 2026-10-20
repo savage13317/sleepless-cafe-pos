@@ -269,7 +269,7 @@
     }
 
     /* --- board refresh: listActivePending() purges expired rows server-side,
-         so a claim that hit 60 minutes simply stops being returned and its row
+         so a claim that hit 30 minutes simply stops being returned and its row
          disappears with no ghost left behind. ---------------------------- */
     async function refreshBoard() {
         const res = await listActivePending();

@@ -132,6 +132,7 @@
 
 <script type="module">
     import { getCategories, getMenu, createOrder, fmtPeso } from './assets/api.js';
+    import { CONFIG } from './assets/config.js';
 
     /* --- state ----------------------------------------------------------- */
     let categories = [];            // [{id,name,display_order}]
@@ -285,6 +286,13 @@
     }
 
     /* --- success screen: code is a STRING, leading zeros preserved ------- */
+    /* The window shown to the customer is the config value, never a literal —
+       config.js ttlMinutes and the DB column default are changed as a pair. */
+    function ttlMinutes() {
+        const t = Number(CONFIG.ttlMinutes);
+        return (Number.isFinite(t) && t > 0) ? t : 30;
+    }
+
     function renderSuccess() {
         const code = String(orderResult.code);
         const name = esc(orderResult.name);
@@ -294,7 +302,7 @@
                  style="letter-spacing:0.35em">${esc(code)}</div>
             <p class="text-brand-cream text-lg font-serif mt-2">${name}</p>
             <p class="text-brand-accentLight text-sm mt-3 mx-auto max-w-prose text-center">
-                Order Placed! Please present your code ${esc(code)} and your name (${name}) to the cashier within 60 minutes to process payment.
+                Order Placed! Please present your code ${esc(code)} and your name (${name}) to the cashier within ${ttlMinutes()} minutes to process payment.
             </p>
             <p class="text-brand-muted text-xs mt-3">
                 Keep this screen open until the cashier confirms — do not close or refresh this page.
