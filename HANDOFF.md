@@ -292,8 +292,9 @@ manual phone run; evidence in §7 below).**
   non-owner user `staff-gate@sleepless-cafe.test` (`3427770d-2f86-479a-b369-ff459e23484e`) was created and
   the whole create → pay → serve flow plus the RLS-fence probes were re-run on its JWT (§7). (2) the pushed
   `owner.html` predates the phase-5 bootstrap fix, so `?owneremails=` was ignored on the public site — worked
-  around by writing `sl_config.ownerEmails` into `localStorage`; the fix is committed at `0375ac8` and lands
-  once `main` is pushed. (3) the "on a phone" item is manual and still unticked in `MASTER_PLAN.md` §7.
+  around by writing `sl_config.ownerEmails` into `localStorage`; the fix is committed at `0375ac8` and is
+  now **live** (pushed 2026-10-20, Pages rebuilt — see §7), so `?owneremails=` works on the public site
+  without the workaround. (3) the "on a phone" item is manual and still unticked in `MASTER_PLAN.md` §7.
 
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
 `assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
@@ -369,8 +370,11 @@ e3878a3 fix(phase-5): rename colliding SQL function parameters to p_*
 7ea5cb7 docs: record Phase 4 completion and set Phase 5 as next action        <- origin/main
 19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0
 ```
-`main` is **5 ahead of `origin/main`**. The repo is pushed by the human, not by the agent — do not
-`git push` from here.
+`main` **== `origin/main`** — the human pushed `7ea5cb7..cbca447` on 2026-10-20. GitHub Pages rebuilt
+and the live `owner.html` now carries the phase-5 bootstrap fix (`owneremails` 2 hits, `!emails` 1,
+`ownerEmails` 3, `split` 3 — matching `owner.html:97–115` + the gate at `:652`), so the `?owneremails=`
+workaround noted in §4 D is **no longer needed** on the public site. Standing rule for future sessions:
+the agent does not push on its own — a push needs an explicit human request.
 
 Conventional-commit style is the project's; keep `fix(phase-N):` / `feat(phase-N):` prefixes and
 put the live-verification evidence in the commit body, as the three commits above do.
