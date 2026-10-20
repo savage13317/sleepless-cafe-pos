@@ -219,8 +219,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
   The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
   both hosts boot with no params at all.
-- Git: `main == origin/main == b62fd2f` (`fix(phase-7): make GitHub Pages usable for a first-time visitor`,
-  pushed `af1f4de..b62fd2f`). Working tree clean except the docs pass that added this section.
+- Git: `main == origin/main == 2342c83` (`fix(phase-7): cart line controls and visible size selection on
+  menu.html`, pushed `d9ccdca..2342c83`). Working tree clean except the docs pass that added this section.
 
 ---
 
@@ -237,7 +237,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`), 2,044 B.** Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
-| `menu.html` | 20,233 B. Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). |
+| `assets/app.css` | **7,288 B, extended 2026-10-24 (`2342c83`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity). Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
+| `menu.html` | **24,301 B, fixed 2026-10-24 (`2342c83`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 40,991 B, **Phase 5 fix applied**. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
@@ -279,6 +280,16 @@ evidence: dot = WS live, paid card appears on the KDS with **no reload**, and `m
   `NOT_VOIDABLE`; `create_order` with an unoffered size → `INVALID_SIZE` before any INSERT.
 - Link/asset sweep clean: every `href`/`src` in the 5 pages resolves; the only intended cross-page
   link is `index.html:160 → menu.html`; no page references `assets/ui.js`.
+- **UI fix pass 2026-10-24 (`2342c83`, pushed `d9ccdca..2342c83`)** — two defects a dogfooding customer
+  reported on the live menu, both reproduced on `localhost:8731` before and after the fix:
+  1. *"you cant delete items in cart"* — `renderCart()` drew each line as a plain row and `setQty` is
+     clamped at 1, so no path reached zero. Cart lines now carry `+` / `−` / `Remove`; verified that
+     `−` at ×1 deletes the line and the empty-cart copy renders, `Remove` drops a ×2 line outright,
+     `+` increments, and totals/counts recompute.
+  2. *"no identifier for the client if it is already selected"* — chips were visually identical and the
+     choice was destroyed by the next repaint. Verified the first chip renders selected, tapping another
+     chip moves the marker, the marker survives a category switch (`sizeChoice` is page-level), and
+     Add to Cart prices the **selected** size (Large = 170.00, not the 140.00 default).
 - Static console sweep clean: no import/export mismatches (25 exports in `api.js`), no undefined
   identifiers, no duplicate `id` attributes, all 8 in-page `JSON.parse` sites are `try/catch`-guarded.
 - One defect found and fixed: the comment above `uploadImage` said **PUT** while the code is **POST**

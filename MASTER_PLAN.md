@@ -136,7 +136,11 @@ Ordering System/
 and no query params, and found three defects that the localhost verification had masked — a `REPLACE_ME`
 committed config default (site unusable for a first-time visitor), a `/favicon.ico` 404 on every page load, and
 a build-status strip still saying "pending" on a finished site. All three fixed in `b62fd2f`
-(`fix(phase-7): make GitHub Pages usable for a first-time visitor`, pushed). **Next up: Phase 8 (Vercel go-live),
+(`fix(phase-7): make GitHub Pages usable for a first-time visitor`, pushed).
+**Customer-reported UI defects fixed 2026-10-24 (`2342c83`, pushed `d9ccdca..2342c83`):** a dogfooding
+visitor found the cart could not be undone (plain rows, `setQty` clamped at 1) and a size tap gave no
+visible feedback (identical chips, state on a node `paint()` replaces). Cart lines now carry `+`/`−`/`Remove`
+and the selected size is a filled chip plus check icon plus `aria-label`. **Next up: Phase 8 (Vercel go-live),
 parked until the phone run and a Vercel account/domain exist.**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
@@ -225,7 +229,7 @@ Reuse, do not reinvent: `brand.dark #140c08`, `brand.card #221610`, `brand.accen
 
 | Page | Layout target | Specific requirements |
 |---|---|---|
-| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, size selector, ₱price, `+`/`−` stepper, Add to Cart); cart drawer with itemized totals; checkout asks Full Name; success screen shows code + name + 60-min instruction verbatim from spec |
+| `menu.html` | Mobile-first, 390px primary | Category tabs top; picture cards (image, name, desc, **size chips where the selected one is visibly marked — filled chip + check icon + `aria-label`, never color alone**, ₱price, `+`/`−` stepper for the NEXT add, Add to Cart); cart drawer with itemized totals — **every cart line carries its own `+` / `−` / `Remove` controls and `−` at ×1 deletes the line**; checkout asks Full Name; success screen shows code + name + 60-min instruction verbatim from spec |
 | `cashier.html` | Desktop/tablet, `max-w-7xl` | Big code-input field (typed or scanned), instant lookup; live unpaid table columns exactly: Code · Customer Name · Time Created · Time Remaining · No. of Items/Drinks · Total Amount; Confirm Payment button. Rows **vanish** at 60 min (Realtime `DELETE` or a re-purged poll — identical result). Under 2 min remaining the row turns red and reads **LAST CALL**, since the next click may already be past the deadline |
 | `kitchen.html` | KDS: high contrast, large text, tap targets ≥ 48px | Cards sorted by `paid_at`; shows name + code + paid time + **live elapsed counter**; itemized list with sizes; Mark as Served button; card leaves view |
 | `owner.html` | Tabbed admin | Tab1 Sales (daily/monthly/yearly + revenue/orders/AOV + export CSV) · Tab2 Turnover (avg fulfillment, peak-hour heatmap) · Tab3 Menu builder (image upload → Storage, dynamic size/price pairs) · Tab4 Category create/reorder/delete |
