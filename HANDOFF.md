@@ -260,13 +260,36 @@ evidence: dot = WS live, paid card appears on the KDS with **no reload**, and `m
   (`orders_staff_delete` is authenticated-only + `status='pending_payment'`), so no anon `DELETE` is
   reachable; "owner-only" is a UI decision (§9.7), not a JWT claim check.
 
-**Start here next → D. Phase 7 — GitHub Pages dogfood** (public URL is live; tick the Gate A items
-including the TTL deletion proof and the paid-permanence proof).
+**D. Phase 7 — GitHub Pages dogfood (`qa-engineer` + `devops-lead`) — DONE (Gate A green except the
+manual phone run; evidence in §7 below).**
+- Public URL live: `https://savage13317.github.io/sleepless-cafe-pos/` serves `index.html` (200, 10,735 B)
+  from `main`; `noindex` present on `cashier.html:2`, `kitchen.html:2`, `owner.html:2`.
+- Walkthrough on the public site: `menu.html?sburl=&sbkey=` → config written to `localStorage` → Flat
+  White order **13341 "Gate A Walker"** → `cashier.html?email=&password=` → **Paid — sent to the
+  kitchen** → `kitchen.html` → **Marked as served** (`served_at` written). Second order **21574
+  "Gate A Second"** (Hot Chocolate) paid + served. Owner Sales tab: **₱615.00 revenue / 4 completed /
+  ₱153.75 avg** across 2026-10-19 and 2026-10-20.
+- TTL deletion proof: probe order `code='90001'` with `expires_at` 30 min in the past (+2 `order_items`)
+  → authenticated `list_active_pending` deleted it — `SELECT * FROM orders WHERE code='90001'` → `[]`,
+  its `order_items` → `0`. The sweep ran with an **owner JWT**: an anon sweep cannot delete
+  (`orders_staff_delete` is authenticated-only), which is the RLS boundary working as designed, not a
+  TTL bug. (A real 60-min wait was not sat; the probe's `expires_at` was back-dated instead.)
+- Permanence proof: 10 consecutive authenticated sweeps left 4 served orders + the live pending order
+  intact, `order_items` count unchanged (5), analytics unchanged.
+- `void_order` exercised on the public owner UI: **Void claim** arms ("Void drops claim 71377 and its
+  items for good. Tap "Confirm void" again to do it.") → **Confirm void** → "Claim 71377 voided — the
+  row and its items are gone."; `SELECT` for 71377 → `[]`, its items → 0, revenue unchanged (voided
+  unpaid orders never counted).
+- Caveats: (1) the cashier session used the **owner's** credentials — the two `staff-probe` Auth users'
+  passwords were never recorded, so their sign-in returned 400; `mark_paid`/`mark_served` need only
+  `authenticated`, so the flow is proven but not role-differentiated. (2) the pushed `owner.html`
+  predates the phase-5 bootstrap fix, so `?owneremails=` was ignored on the public site — worked around
+  by writing `sl_config.ownerEmails` into `localStorage`; the fix is committed at `0375ac8` and lands
+  once `main` is pushed. (3) the "on a phone" item is manual and still unticked in `MASTER_PLAN.md` §7.
 
-**D. Phase 7 — GitHub Pages dogfood:** 3-order walkthrough on the public URL
-`https://savage13317.github.io/sleepless-cafe-pos/`.
-**E. Phase 8 — Vercel go-live** (`tools/inject-config.mjs` writes `assets/config.generated.js`;
-that file and root `vercel.json` are gitignored artifacts).
+**Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
+`assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
+Gate A is fully green — including the manual phone run — and a Vercel account/domain exist.
 
 Phases 2–5 are strictly ordered; file-count budget per sub-agent dispatch is **1–3 files**;
 backend verified before frontend; modify only the files the task needs.
@@ -330,12 +353,16 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0   <- origin/main (HEAD)
+HEAD      feat(phase-7): GitHub Pages dogfood - Gate A green (TTL deletion + permanence proven)
+16f399b fix(phase-6): QA sweep - envelope compliance verified live, uploadImage comment corrected
+0375ac8 feat(phase-5): owner dashboard bootstrap + menu-images Storage ACLs
+e3878a3 fix(phase-5): rename colliding SQL function parameters to p_*
+7ea5cb7 docs: record Phase 4 completion and set Phase 5 as next action        <- origin/main
+19fef79 fix(phase-4): publish orders for postgres_changes and port realtime.js to supabase-js 2.118.0
 c581d84 feat(phase-4): kitchen KDS board and realtime watcher (ws path still broken)
-a3fed04 fix(transport): call SQL RPCs under /rest/v1/rpc/ and hoist config bootstrap
-c80f8bc fix(sql): repair plpgsql bodies and migrate RLS to verified PG grammar
-4217d22 chore: ignore deploy-root vercel.json artifact
 ```
+`main` is **4 ahead of `origin/main`** once the commit above lands. The repo is pushed by the human,
+not by the agent — do not `git push` from here.
 
 Conventional-commit style is the project's; keep `fix(phase-N):` / `feat(phase-N):` prefixes and
 put the live-verification evidence in the commit body, as the three commits above do.

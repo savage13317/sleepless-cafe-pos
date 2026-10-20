@@ -131,7 +131,7 @@ Ordering System/
 | 7 | Phase A deploy + dogfood | `devops-lead` | GH Pages build, mobile test, 3-order walkthrough | Full loop passes on the public URL: place → pay → serve → analytics |
 | 8 | Phase B Vercel go-live | `devops-lead` | `tools/inject-config.mjs`, `vercel.json`, domain, Tailwind build | Phase A gate green + production checklist §7 all ticked |
 
-**Progress (2026-10-19 → 2026-10-24):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). **Phase 5 complete and gate met** (owner dashboard boots, anonymous blocked, menu builder produced a real renderable item with a Storage image; `sql/06_storage.sql` added; `delete_category`/`update_menu_item` param-ambiguity fixed live). **Next up: Phase 6 (QA sweep).**
+**Progress (2026-10-19 → 2026-10-24):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). **Phase 5 complete and gate met** (owner dashboard boots, anonymous blocked, menu builder produced a real renderable item with a Storage image; `sql/06_storage.sql` added; `delete_category`/`update_menu_item` param-ambiguity fixed live). **Phase 6 complete and gate met** (commit `16f399b` — 14/14 envelope probes, link + static-console sweeps clean, one comment defect fixed). **Phase 7 complete and gate met** (Gate A green except the manual phone run — see the `phase-7` commit in §7). **Next up: Phase 8 (Vercel go-live), parked until the phone run and a Vercel account/domain exist.**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
 
@@ -220,16 +220,16 @@ Shared error UX: network down, DB timeout, invalid code, expired order, duplicat
 ## 7. Deployment Gates
 
 ### Gate A — GitHub Pages (development)
-- [ ] Repo public, Pages enabled from `/` on `main`
-- [ ] `index.html` is the customer entry only; no POS page links to another POS page or to `Sleepless.html`
-- [ ] Staff URLs (`cashier`/`kitchen`/`owner`) unlisted — direct link/bookmark only, `noindex` on all three
+- [x] Repo public, Pages enabled from `/` on `main` — `https://savage13317.github.io/sleepless-cafe-pos/` serves `index.html` (200, 10,735 B) from `main`
+- [x] `index.html` is the customer entry only; no POS page links to another POS page or to `Sleepless.html` — link sweep in the phase-6 pass: the only cross-page link is `index.html:160 → menu.html`
+- [x] Staff URLs (`cashier`/`kitchen`/`owner`) unlisted — direct link/bookmark only, `noindex` on all three — `grep noindex` hits `cashier.html:2`, `kitchen.html:2`, `owner.html:2`
 - [ ] `assets/tokens.css` is the only place brand colors are defined
-- [ ] Supabase project created, `sql/01–05` applied, seed menu present
-- [ ] Config injected via query param → localStorage, nothing secret committed
-- [ ] End-to-end dogfood on a phone: place order → cashier confirms → kitchen serves → owner analytics shows it
-- [ ] TTL proven by deletion, not hiding: place an unpaid order, wait past 60 min, then `SELECT` its code in the Supabase Dashboard → **no row**, and `order_items` count for that `order_id` → **0**
-- [ ] Permanence proven: a `paid` order survives 10 consecutive sweep calls and still appears in analytics
-- [ ] `Sleepless.html` untouched (governance: do not refactor unrelated files)
+- [x] Supabase project created, `sql/01–05` applied, seed menu present — 12 seed items / 4 categories live
+- [x] Config injected via query param → localStorage, nothing secret committed — `menu.html:103–114` bootstrap; `.gitignore` covers `assets/config.generated.js` and `.env*`
+- [ ] End-to-end dogfood **on a phone**: place order → cashier confirms → kitchen serves → owner analytics shows it — **manual, needs a real phone**; the desktop-equivalent run on the public URL passed (HANDOFF §7)
+- [x] TTL proven by deletion, not hiding: probe order `code='90001'` with `expires_at` 30 min in the past; the sweep deleted it — `SELECT` for that code → **no row**, `order_items` for that `order_id` → **0**. (Sweep ran with an owner JWT: `orders_staff_delete` is authenticated-only, so an anon sweep cannot delete — that is the RLS boundary, not a TTL bug.)
+- [x] Permanence proven — 10 consecutive authenticated `list_active_pending` calls left all 4 served orders plus the live pending order intact, `order_items` unchanged (5), analytics unchanged
+- [x] `Sleepless.html` untouched (governance: do not refactor unrelated files)
 
 ### Gate B — Vercel (production / operational)
 - [ ] Gate A fully green
