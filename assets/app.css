@@ -82,6 +82,49 @@ body {
   box-shadow: 0 6px 18px color-mix(in srgb, var(--brand-accent) 40%, transparent);
 }
 
+/* --- Phase 2+: size-chip selection state (menu.html) ---------------------
+   A size chip is either offered-and-unselected (outline) or selected (filled).
+   The customer must be able to see which size "Add to Cart" will take, so the
+   default (first offered size) is rendered as selected too. No brand hex here:
+   every color is var(--brand-*) through color-mix, so tokens.css stays the
+   single source of truth. */
+.size-chip {
+  border: 1px solid color-mix(in srgb, var(--brand-accent) 25%, transparent);
+  color: var(--brand-cream);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.size-chip.selected {
+  background: color-mix(in srgb, var(--brand-accent) 26%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-accent) 80%, transparent);
+  color: var(--brand-accent-light);
+  font-weight: 700;
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--brand-accent) 28%, transparent);
+}
+
+/* --- Phase 2+: cart line controls (menu.html) ---------------------------
+   Remove/qty buttons on a cart line. The red is a SEMANTIC status color, not
+   brand identity, so it lives here rather than in tokens.css. Tap targets stay
+   >= 40px so a phone customer can actually hit them. */
+.cart-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--brand-border) 70%, transparent);
+  background: color-mix(in srgb, var(--brand-card-hover) 70%, transparent);
+  color: var(--brand-cream);
+  cursor: pointer;
+}
+.cart-btn-remove {
+  color: #ffd7d0;
+  border: 1px solid color-mix(in srgb, #c0392b 55%, transparent);
+  background: color-mix(in srgb, #c0392b 22%, transparent);
+  font-weight: 700;
+}
+
 /* --- Phase 3: cashier countdown status pair ------------------------------ */
 .status-live {
   color: var(--brand-accent-light);

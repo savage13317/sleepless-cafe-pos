@@ -128,6 +128,11 @@
     let cart = new Map();           // key: menu_item_id + '\0' + size -> {itemId,size,qty}
     let activeCat = null;           // category id currently tabbed
     let orderResult = null;         // {code,name} once placed — success screen mode
+    /* Selected size per item. NOT stored on the card element: paint() replaces
+       #app's innerHTML, so a data-size written on a card is destroyed on the
+       next repaint (Add to Cart, or tapping another category) and the customer's
+       pick silently reverts to the first offered size. */
+    const sizeChoice = new Map();   // menu_item_id -> size label
 
     const keyOf = (id, size) => id + '\u0000' + size;
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -186,10 +191,18 @@
             : `<div class="glass-card rounded-xl h-40 mb-3 flex items-center justify-center">
                  <i class="fa-solid fa-coffee text-brand-accent text-5xl opacity-60"></i>
                </div>`;
-        const chips = sizes.map((s) =>
-            `<button data-size="${esc(s.size)}"
-               class="rounded-md px-2 py-1 text-xs font-semibold border border-brand-border/60 whitespace-nowrap">${esc(s.size)} · ${fmtPeso(s.price)}</button>`
-        ).join('');
+        /* The first offered size is the default: it is what Add to Cart takes
+           when the customer never taps a chip, so it must render as SELECTED —
+           otherwise the choice is invisible and a phone customer orders the
+           wrong size. State is never carried by color alone: the selected chip
+           also gets a check icon and an aria-label. */
+        const selSize = sizeChoice.get(m.id) ?? (sizes[0]?.size ?? '');
+        const chips = sizes.map((s) => {
+            const on = s.size === selSize;
+            return `<button data-size="${esc(s.size)}"
+               aria-label="${on ? 'Selected size' : 'Choose size'}: ${esc(s.size)}"
+               class="size-chip${on ? ' selected' : ''} rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap">${on ? '<i class="fa-solid fa-check text-brand-accentLight mr-1"></i>' : ''}${esc(s.size)} · ${fmtPeso(s.price)}</button>`;
+        }).join('');
         return `<div class="glass-card rounded-xl p-4 mb-4" data-item="${esc(m.id)}">
             ${img}
             <h3 class="text-brand-cream text-lg font-bold tracking-tight mt-2">${esc(m.name)}</h3>
@@ -218,14 +231,23 @@
             const item = menu.find((m) => m.id === r.itemId);
             const price = (item?.sizes_and_prices ?? []).find((s) => s.size === r.size)?.price ?? 0;
             count += r.qty; total += price * r.qty;
-            return `<div class="flex items-center justify-between py-1 border-b border-brand-border/40">
+            /* An item already in the cart can only be undone FROM the cart: the
+               card stepper is clamped at 1 because it sets the quantity for the
+               NEXT add. So every line carries its own controls, and the row
+               carries the id+size identity the buttons need to find the entry. */
+            return `<div class="flex items-center justify-between gap-2 py-1 border-b border-brand-border/40"
+                    data-cart-line data-cart-id="${esc(r.itemId)}" data-cart-size="${esc(r.size)}">
                 <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)} · ×${r.qty}</span>
-                <span class="text-brand-accentLight font-mono text-sm">${fmtPeso(price * r.qty)}</span>
+                <span class="text-brand-accentLight font-mono text-sm mr-2">${fmtPeso(price * r.qty)}</span>
+                <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="1">+</button>
+                <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="-1">−</button>
+                <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-cart-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
               </div>`;
         }).join('');
         return `<div class="glass-card rounded-xl p-4 mt-4">
             <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Your cart · ${count} item${count === 1 ? '' : 's'}</p>
             ${lines}
+            <p class="text-brand-muted text-xs mt-1">Tap − to take one out, Remove to drop the line.</p>
             <p class="text-brand-accentLight font-mono text-sm mt-2">Total ${fmtPeso(total)}</p>
             <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-checkout>Proceed to Checkout</button>
           </div>`;
@@ -295,10 +317,23 @@
     }
 
     /* --- event wiring (delegated, so re-rendering cards keeps handlers) -- */
+    /* Card-level stepper: the clamp at 1 is deliberate. This stepper sets the
+       quantity for the NEXT "Add to Cart"; undoing something already in the cart
+       is a cart-line action (setCartQty / Remove). Do not allow 0 here. */
     function setQty(itemId, delta) {
         const cur = currentQty(itemId);
         const next = Math.min(999, Math.max(1, cur + delta));
         setQtyDisplay(itemId, next);
+    }
+    /* Cart-level quantity: dropping below 1 DELETES the line. This is the only
+       path by which a customer can remove an item they already added. */
+    function setCartQty(key, delta) {
+        const row = cart.get(key);
+        if (!row) return;
+        const next = row.qty + delta;
+        if (next < 1) cart.delete(key);
+        else row.qty = Math.min(999, next);
+        paint();
     }
     function currentQty(itemId) {
         const el = document.querySelector(`[data-item="${CSS.escape(itemId)}"] [data-qty-display]`);
@@ -312,8 +347,10 @@
         const item = menu.find((m) => m.id === itemId);
         if (!item) return;
         const card = document.querySelector(`[data-item="${CSS.escape(itemId)}"]`);
-        /* default to the first offered size if the customer never picked one */
-        const size = card?.dataset.size ?? (item.sizes_and_prices?.[0]?.size ?? '');
+        /* sizeChoice is the truth (it survives repaints); the card attribute is
+           a fallback only, and the first offered size is the rendered default. */
+        const size = sizeChoice.get(itemId) ?? card?.dataset.size
+            ?? (item.sizes_and_prices?.[0]?.size ?? '');
         const qty = currentQty(itemId);
         const k = keyOf(itemId, size);
         const existing = cart.get(k);
@@ -332,11 +369,30 @@
             const card = t.closest('[data-item]');
             if (card) { addToCart(card.dataset.item); paint(); }
         }
+        /* Cart-line controls. These use data-cart-qty / data-cart-remove, never
+           data-qty: that hook is card-scoped and resolved through
+           closest('[data-item]'), which a cart row is not inside. */
+        else if (t.dataset.cartQty !== undefined) {
+            const row = t.closest('[data-cart-line]');
+            if (row?.dataset.cartId) {
+                setCartQty(keyOf(row.dataset.cartId, row.dataset.cartSize), Number(t.dataset.cartQty));
+            }
+        }
+        else if (t.dataset.cartRemove !== undefined) {
+            const row = t.closest('[data-cart-line]');
+            if (row?.dataset.cartId) { cart.delete(keyOf(row.dataset.cartId, row.dataset.cartSize)); paint(); }
+        }
         else if (t.dataset.size) {
-            /* remember the chosen size on the card itself; a different size
-               is a separate cart line (key = id + NUL + size) */
+            /* Selection lives in sizeChoice, not on the card: paint() below
+               replaces #app's innerHTML, which would destroy a data-size on the
+               card. A different size is still a separate cart line (key = id +
+               NUL + size), so switching sizes does not merge the two lines. */
             const card = t.closest('[data-item]');
-            if (card) card.dataset.size = t.dataset.size;
+            if (card) {
+                sizeChoice.set(card.dataset.item, t.dataset.size);
+                card.dataset.size = t.dataset.size;
+                paint();          /* the tap must be visible, not silent */
+            }
         }
         else if (t.dataset.checkout !== undefined) {
             awaitingName = true;   /* checkout prompts for the name next */
