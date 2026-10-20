@@ -3,8 +3,9 @@
 **Written:** 2026-10-19 · **updated:** 2026-10-24 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
 **Where we are:** Phases 1–7 done · **Phase 5 gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes
 conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
-host** — Gate A green except the manual phone run — and the Gate A audit fixed three public-host defects
-(commit `b62fd2f`, §4 D2) · **Phase 8 (Vercel go-live) is next and parked.**
+host** — Gate A green except the manual phone run — the Gate A audit fixed three public-host defects
+(commit `b62fd2f`, §4 D2), and two customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
+`2342c83` + `eab2481`) · **Phase 8 (Vercel go-live) is next and parked.**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -219,8 +220,9 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   `cashier.html` (+ `&email=&password=` — values not recorded here), `kitchen.html`, `owner.html`.
   The query params are no longer needed: `assets/config.js` now commits the real public defaults, so
   both hosts boot with no params at all.
-- Git: `main == origin/main == 2342c83` (`fix(phase-7): cart line controls and visible size selection on
-  menu.html`, pushed `d9ccdca..2342c83`). Working tree clean except the docs pass that added this section.
+- Git: `main == origin/main == eab2481` (`fix(phase-7): name field above the cart and one place-order
+  button on menu.html`, pushed `b92c7a4..eab2481`). Working tree clean except the docs pass that added
+  this section.
 
 ---
 
@@ -238,7 +240,7 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
 | `assets/app.css` | **7,288 B, extended 2026-10-24 (`2342c83`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity). Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
-| `menu.html` | **24,301 B, fixed 2026-10-24 (`2342c83`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. |
+| `menu.html` | **26,345 B, fixed 2026-10-24 twice (`2342c83`, then `eab2481`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. |
 | `cashier.html` | 20,177 B. Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. |
 | `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
 | `owner.html` | 40,991 B, **Phase 5 fix applied**. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
@@ -361,6 +363,37 @@ the board."** → owner gate accepted `?owneremails=` on the public site (no loc
 and the Sales tab reads **₱875.00 / 6 completed / ₱145.83 avg**. `rel="icon"` present on all pages;
 `assets/favicon.svg` → 200. Console on a fresh load: the Tailwind CDN warning only — no
 `net::ERR_NAME_NOT_RESOLVED`, no page-initiated `/favicon.ico` request, no NETWORK copy.
+
+**D3. Phase 7 addendum 2 — customer checkout restructure on `menu.html` (commit `eab2481`, pushed
+`b92c7a4..eab2481`)** — a third dogfooding report: *"full name should be above the cart and proceed to
+check out should function like place order... and it should check the name (should not be blank) before
+proceeding checkout"*. Reproduced on `localhost:8731` first, then fixed — one file, `menu.html`:
+1. **Name field rendered below the cart** → the DOM is now three sibling blocks in order: `#app` (menu),
+   `#namefield` (name card), `#cartarea` (cart). The field and the cart both live OUTSIDE `#app` because
+   `paint()` replaces `#app.innerHTML`; a cart inside `#app` cannot be repainted without being destroyed
+   by the menu render. `render()` → `renderMenu()`, `renderError()` slimmed to the copy block, and
+   `paintError()` now owns the fixable-cart choice (`MENU_ITEM_UNAVAILABLE` / `INVALID_SIZE` keep the
+   cart visible, everything else clears it).
+2. **Two action buttons** — `Place Order` under the field plus `Proceed to Checkout` in the cart, where
+   the checkout button only armed an `awaitingName` flag and relied on an `input` `change` listener to
+   submit later — merged into one: the `data-checkout` branch performs the place-order action. The
+   `data-placeorder` branch, the `awaitingName` flag and the `change` listener are deleted, so typing
+   alone can never fire a request and the customer taps exactly once.
+3. **Blank name guard, client-side before the network** — the checkout tap calls `setName()` on the
+   field's value first; blank (or over 100 chars) is refused with a human line and nothing is sent. The
+   server's `INVALID_CUSTOMER_NAME` stays as the backstop. This exposed a latent defect: `paintNameCopy()`
+   swapped the field for the copy and then called `openNameInput()`, which overwrote it in the same frame,
+   so a refused tap showed nothing at all. `nameFieldHtml(complaint)` keeps the field and puts the copy
+   above it, so the customer can fix it and tap again.
+- Verified live on `localhost:8731` after the fix: DOM order `app,namefield,cartarea`; zero
+  `[data-placeorder]`; no checkout button while the cart is empty; blank-name tap → "We need your name
+  at the counter." visible above the field with the cart intact and **no request sent**; name typed +
+  tap → success screen (code `51573` as a string, name echoed, 60-minute instruction verbatim) with
+  `#namefield` and `#cartarea` cleared; cart controls still intact in the new block (`+` → ×2 PHP 280.00,
+  `−` `−` → empty-cart copy). Only console message: the Tailwind CDN warning.
+- **Pages propagation note:** Pages serves the pushed tree (§1.z), so the public host lagged this push
+  for a few minutes. Before trusting a browser test on the public URL, confirm the new markers are live
+  with `curl` — `id="cartarea"` and `nameFieldHtml` present, `data-placeorder` absent.
 
 **Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
 `assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
