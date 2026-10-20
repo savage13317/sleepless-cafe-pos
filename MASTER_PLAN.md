@@ -131,7 +131,7 @@ Ordering System/
 | 7 | Phase A deploy + dogfood | `devops-lead` | GH Pages build, mobile test, 3-order walkthrough | Full loop passes on the public URL: place → pay → serve → analytics |
 | 8 | Phase B Vercel go-live | `devops-lead` | `tools/inject-config.mjs`, `vercel.json`, domain, Tailwind build | Phase A gate green + production checklist §7 all ticked |
 
-**Progress (2026-10-19):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). Next up: **Phase 5 (owner dashboard)**.
+**Progress (2026-10-19 → 2026-10-24):** Phases 0–4 complete and applied live; Phase 4 gate met (commit `19fef79` — dot reads WS live, paid card appears with no reload, `mark_served` wrote `served_at` + `fulfillment_time_seconds`). **Phase 5 complete and gate met** (owner dashboard boots, anonymous blocked, menu builder produced a real renderable item with a Storage image; `sql/06_storage.sql` added; `delete_category`/`update_menu_item` param-ambiguity fixed live). **Next up: Phase 6 (QA sweep).**
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
 

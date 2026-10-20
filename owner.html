@@ -88,6 +88,28 @@
         </p>
     </footer>
 
+    <!-- ============================ CONFIG BOOTSTRAP (classic) ===================
+     Classic (non-module) on purpose: a page's module body runs AFTER its
+     imported modules, so a bootstrap inside the module body would execute
+     after config.js already resolved CONFIG from localStorage. Values are
+     never printed or echoed.                                                    -->
+<script>
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= / ?owneremails=
+       once. Classic (non-module) on purpose: must run before config.js is
+       evaluated. Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey'), emails = q.get('owneremails');
+        if (!url && !key && !emails) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        if (emails) cfg.ownerEmails = emails.split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(',');
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
     <!-- ========================== OWNER APP (ES module) ====================
      Imports from './assets/api.js' AND './assets/config.js' — unlike cashier/kitchen, this
      page needs CONFIG itself, because the owner gate reads CONFIG.ownerEmails
@@ -103,19 +125,6 @@
         updateMenuItem, uploadImage, listActivePending, voidOrder, fmtPeso, fmtTime, fmtCountdown,
     } from './assets/api.js';
     import { CONFIG } from './assets/config.js';
-
-    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
-       Same flow as cashier.html. Values are never printed or echoed. */
-    (function () {
-        const q = new URLSearchParams(location.search);
-        const url = q.get('sburl'), key = q.get('sbkey');
-        if (!url && !key) return;
-        let cfg;
-        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
-        if (url) cfg.sbUrl = url;
-        if (key) cfg.sbKey = key;
-        localStorage.setItem('sl_config', JSON.stringify(cfg));
-    })();
 
     /* --- state ----------------------------------------------------------- */
     let tab = 'sales';          // sales | turnover | menu | categories
