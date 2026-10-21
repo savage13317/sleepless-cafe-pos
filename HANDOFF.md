@@ -7,7 +7,7 @@ host** — Gate A green except the manual phone run — the Gate A audit fixed t
 (commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
 `2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
 no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
-payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets). · **UI/UX sweep 2026-10-21 in progress: file-complete, live-applied, NOT yet committed — §12**
+payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets). · **UI/UX sweep 2026-10-21 SHIPPED: committed + pushed `4888f24..614b9f3`, public-host door proof green — §12**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -917,8 +917,15 @@ what was applied — read it as history, not as pending work. Apply in this orde
 `menu.html`, `kitchen.html`, `owner.html`, `assets/api.js`, `assets/realtime.js`, and
 `assets/tailwind.compiled.css` (rebuilt so every new token compiles). **Live-applied:** `sql/02_functions.sql` —
 the `items_count` cups fix and the new `sales_report` went live over the dashboard `database/query` endpoint
-(HTTP 201 each). **NOT committed:** the working tree is DIRTY, nothing committed yet, ship pending human approval —
-no `git add`, no `git commit`, no `git push` was run this pass. `tools/tailwind.config.js` already covered
+(HTTP 201 each). **Committed and pushed 2026-10-21 (human authorized "ship it"):** four conventional commits in governance order —
+`a60ccb4` fix(sql) → `2a06908` feat(assets) → `0654614` feat(pages) → `614b9f3` docs — pushed `4888f24..614b9f3`, tree clean,
+`HEAD == origin/main == 614b9f3`. **Public-host proof after the push:** `login.html` renders the narrow centred card and the door
+routes to `cashier.html`, which shows "Signed in as Probe (cashier)" and a working Log out (gate copy + footer back to `nobody`);
+`owner.html` shows the Focus combobox (31 options) and, focused on 2026, the window line "2026-01-01 → 2026-12-31 · monthly bars ·
+focused on 2026" and a downloaded `sleepless-sales-yearly-2026.csv` = `month,cups,cash_received,orders` / `2026-10,49,8650,13`.
+Still localhost-only: the kitchen realtime backstop (the pushed `assets/realtime.js` blob is the proven file, but no public
+board watch was run). The "(files only, not yet committed)" tags in the §3 table above predate the push — this block supersedes them.
+`tools/tailwind.config.js` already covered
 `login.html` in its content scan, so no config change was needed.
 
 The ten items, in the order they were reported:
