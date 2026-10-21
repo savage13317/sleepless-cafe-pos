@@ -1,0 +1,11 @@
+[
+  {
+    "Name": "purge-expired-claims",
+    "Cron": "*/15 * * * *",
+    "For": "all",
+    "Path": "/purge-expired",
+    "Method": "POST",
+    "Input": {},
+    "Notes": "Phase 8 Gate B server-side TTL authority. Fires every 15 min so a 30-min claim is physically DELETEd on schedule even when no staff page is open; the lazy client-side sweep in list_active_pending/kitchen_queue stays as the self-healing backstop. Path /purge-expired routes to the Edge Function at functions/purge-expired/index.ts, which mints a REAL staff JWT (password grant) and calls POST /rest/v1/rpc/purge_expired_orders as bearer - RLS orders_staff_delete (sql/03:141, TO authenticated) is the only role that can DELETE, so no service-role key is used. APPLY LIVE (director, authenticated dashboard, later): (1) deploy the function + set its env secrets FIRST: supabase functions deploy purge-expired, then supabase secrets set SL_SB_URL=... SL_PUBLISHABLE_KEY=... SL_STAFF_EMAIL=... SL_STAFF_PASSWORD=... (secrets live only in Edge-Function env, never the repo/browser); (2) register this cron by ONE of: (a) authenticated dashboard REST - POST https://api.supabase.com/v1/projects/epldhypmhpxkebtiidsc/functions/cron with Authorization: Bearer <localStorage['supabase.dashboard.auth.token'].token> and body = this array (HANDOFF 1.x path); (b) dashboard Cron Jobs UI (Project Settings -> Cron Jobs), paste this job; (c) supabase CLI - supabase cron add -f tools/cron/purge-expired.json. NOTE: the Supabase cron payload is an ARRAY of job objects (this file is wrapped in [ ] so supabase cron add -f accepts it); the single job object is the one shown here. Never commit the staff password."
+  }
+]
