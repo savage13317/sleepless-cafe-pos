@@ -7,7 +7,7 @@ host** — Gate A green except the manual phone run — the Gate A audit fixed t
 (commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
 `2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
 no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
-payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets).
+payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets).
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -136,10 +136,14 @@ reaction** is the authoritative gate evidence, corroborated by the authenticated
 - Password grant works once the user exists: `POST /auth/v1/token?grant_type=password`.
 - Dashboard Auth routes are **`/auth/...`**, not `/authentication/...`
   (`/auth/users`, `/auth/providers`, `/auth/templates`, `/auth/rate-limits`, …).
-- Staff identity in use: `staff-probe@sleepless-cafe.test` (password deliberately **not**
-  recorded here — it is a credential, and this file is committed; it lives only in the local
-  browser URL / `localStorage.sl_auth`), id `890bb2f2-4ee3-45ce-9935-392dd032663d`,
-  role `authenticated`, `email_confirmed_at` set. Rotate it if this repo ever becomes public.
+- Staff identities LIVE since 2026-10-21 (password grant verified for all three): `dev@sleepless-cafe.test` (owner),
+  `cashier-probe@sleepless-cafe.test` (cashier), `kitchen-probe@sleepless-cafe.test` (kitchen). Passwords are
+  credentials — reported to the human out-of-band, **never committed** into any file.
+  The legacy `staff-probe@sleepless-cafe.test` (id `890bb2f2-4ee3-45ce-9935-392dd032663d`) still exists in Auth
+  but its password was never recorded, so it is unusable; the roster row was repointed to `cashier-probe@…` and a
+  fresh identity created instead (deleting auth users was never authorized). The Management API has **no user/password
+  routes** — `GET auth/users`, `auth/admin/users/list`, `POST auth/admin/users/<uuid>/password` and friends all 404,
+  so changing an EXISTING identity's password needs the service-role Edge-Function bundle (PENDING OWNER APPROVAL).
   `cashier.html` persists `{email,password}` in `localStorage.sl_auth` — an accepted **Phase-A
   tradeoff**, removed in Phase B. Only the email is ever rendered.
 
@@ -152,7 +156,7 @@ reaction** is the authoritative gate evidence, corroborated by the authenticated
 - A policy expression referencing a table the caller cannot read raises permission denied.
 - DELETE/UPDATE policies also require SELECT rights; RLS `WITH CHECK` runs before schema
   CHECK/NOT NULL constraints.
-- Verified `CREATE POLICY` grammar: `CREATE POLICY n ON t [AS {PERMISSIVE|RESTRICTIVE}] [FOR {ALL|SELECT|INSERT|UPDATE|DELETE}] [TO {role|PUBLIC|CURRENT_ROLE|CURRENT_USER|SESSION_USER},…] [USING (e)] [WITH CHECK (e)]`. `ON <table>` precedes `FOR`; `FOR` never takes a table name; role restriction is the `TO` clause. `DROP POLICY [IF EXISTS] n ON t [CASCADE|RESTRICT]`.
+- Verified `CREATE POLICY` grammar: `CREATE POLICY n ON t [AS {PERMISSIVE|RESTRICTIVE}] [FOR {ALL|SELECT|INSERT|UPDATE|DELETE}] [TO {role|PUBLIC|CURRENT_ROLE|CURRENT_USER|SESSION_USER},…] [USING (e)] [WITH CHECK (e)]`. `ON <table>` precedes `FOR`; `FOR` never takes a table name; role restriction is the `TO` clause. `DROP POLICY [IF EXISTS] n ON t [CASCADE|RESTRICT]`. `FOR` takes **one** keyword — `FOR INSERT, UPDATE` raises `42601`; split into one policy per verb. An INSERT policy accepts **only `WITH CHECK`** (adding `USING` raises `42601`).
 - The SQL Editor runs as root ("Role postgres") and **bypasses RLS** — never use an Editor result
   as evidence of what `anon`/`authenticated` can see. Probe over REST instead.
 - Empty tables make COUNT-based probes inconclusive; use error-raising probes.
@@ -178,15 +182,26 @@ Runtime is **PostgreSQL 17.11** (repo targets 15; everything used is 15-safe).
   now() + interval '30 minutes'` → 201; without `SET` it raises `42601 syntax error at or near "DEFAULT"`.
   `UPDATE` is `SET … WHERE …` order (the parenthesized `WHERE (…)` form belongs to the `UPDATE t WHERE (…) SET (…)`
   table-literal variant, not the ordinary one).
+- plpgsql **declarations parse eagerly** (unlike lazy bodies): `cu uid uuid;` raises `42601` at CREATE time — a
+  uuid-typed local is just `cu uuid;`.
+- `INSERT tbl WITH (col val)` is the psql table-literal form and is **invalid inside plpgsql** (`42601` at CREATE
+  time) — repo files use standard `INSERT INTO … (cols) VALUES (…)`; always paste a chunk verbatim from the file,
+  never reconstruct it from memory.
+- A plpgsql local named `email` is **ambiguous** (`42702 column reference "email" is ambiguous`) against a table's
+  `email` column inside `WHERE r.email = email` — lazy parse, so the function applies cleanly and fails only at
+  CALL time. All sql/07 functions use `claims_email` instead (FIX note in the file).
 
 ### 1.x SQL execution path (verified 2026-10-24) — do not re-derive
 - The Supabase **SQL Editor in the dashboard never initializes**: the Monaco query pane stays an `svg`
   spinner and the `textarea` / `.monaco-editor` element counts stay 0 after 45 s plus a reload. Do not
   waste time on it — clicking `sql-run-button` cannot help while the editor never mounts.
 - Working path instead, on the **authenticated dashboard page**: `localStorage['supabase.dashboard.auth.token']`
-  is raw JSON whose `.token` (≈ 1406 chars) works as `Authorization: Bearer <tok>` against
+  is raw JSON `{access_token, token_type, expires_in, expires_at, refresh_token}` — use **`.access_token`** (the
+  old `.token` note was wrong; it raised 400) as `Authorization: Bearer <tok>` against
   `POST https://api.supabase.com/v1/projects/epldhypmhpxkebtiidsc/database/query` with body
-  `{"query":"<sql>"}` → `201`, rows returned as JSON. Proved with `SELECT 6*7 AS product;` → `[{"product":42}]`.
+  `{"query":"<sql>"}` → `201`. The endpoint returns only the **last** statement's rows; multi-statement groups
+  **abort atomically** on a parse error, so a failed paste leaves the DB untouched and retries are safe. Inside a
+  JS template literal, SQL regex backslashes must be doubled (`\\.` → SQL sees `\.`).
   No PAT is minted and no credential is ever printed — the token is read and used in place inside the page.
 - Multi-statement bodies work; a `DROP FUNCTION` must precede a signature-changing
   `CREATE OR REPLACE FUNCTION` (`42P13 cannot change name of input parameter` otherwise).
@@ -231,6 +246,7 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   from human menu edits made after the last handoff. The 12-seed counts in this section (and in the section-3 seed
   rows) are **superseded** by these live numbers; the hidden `Test Ristretto R9` item (undeletable while a paid
   order still references it) is unchanged.
+- **Staff identity (built 2026-10-21, files only — nothing applied live):** `staff_roster` (`sql/07_staff_roster.sql`) is the **SERVER-SIDE identity source** — role and station come from a roster row keyed on the caller's claims email, so "signed in" becomes "which station am I". `CONFIG.ownerEmails` is now a **harmless leftover**: the browser allowlist still resolves in `assets/config.js`, but the roster decides, and `owner.html:82` says so. The live DB is still **14 visible items / 5 categories** — the `GM Americano` + `Coopper`/`Doggy` drift is **confirmed intentional by the human** (their own menu testing), not a defect.
 - Auth users (password grant, "Confirm email" OFF → autoconfirm): owner `owner@sleepless-cafe.test`
   (`e5db228e-0041-413f-a0f7-279e1adf5db9`) and staff `staff-gate@sleepless-cafe.test`
   (`3427770d-2f86-479a-b369-ff459e23484e`). The two `staff-probe` users (`890bb2f2-4ee3-45ce-9935-392dd032663d`,
@@ -257,11 +273,11 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | File | State |
 | --- | --- |
 | `sql/01_schema.sql` | 6,899 B. 4 tables, 6 indexes incl. partial `orders_live_pending_idx`. No RLS enablement anywhere (by design). **Changed 2026-10-20 (`f9194aa`):** line 74 `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'` (was 60) and the header comment at line 8. Live DB moved to match - see sec 8.1. |
-| `sql/02_functions.sql` | **Fixed, 49,311 B, applied live, call-tested.** 19 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. **R9 (`f637cc8`):** `delete_category` gained the `MENU_ITEM_IN_USE` pre-check plus a nested `SQLSTATE '23503'` net - see sec 8.2. |
-| `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 11,531 B. 4× `ENABLE ROW LEVEL SECURITY` first, then 11 policy pairs each preceded by `DROP POLICY IF EXISTS`. **R10 (`7916a0d`):** `orders_staff_update` WITH CHECK extended to two arms (unpaid-with-`paid_at IS NULL` / paid-with-`paid_at IS NOT NULL`) so a cashier can reprice a live claim, and `order_items_staff_write` (auth, FOR ALL, `WITH CHECK quantity >= 1 AND subtotal = unit_price * quantity`) added — see sec 9.4. |
+| `sql/02_functions.sql` | **Fixed, 49,311 B, applied live, call-tested.** 19 functions, all `RETURNS jsonb … LANGUAGE plpgsql`. Header carries six `-- FIX:` paragraphs. **R9 (`f637cc8`):** `delete_category` gained the `MENU_ITEM_IN_USE` pre-check plus a nested `SQLSTATE '23503'` net - see sec 8.2. **Staff identity 2026-10-21 (files only, NOT live):** 17 fences added — 7 owner `NOT_OWNER` (`roster_role_of(email) <> 'owner'`) + 10 station `WRONG_STATION`, each preceded by `STAFF_SESSION_REQUIRED` → `STAFF_NOT_REGISTERED`; still 19 functions, the roster fns live in 07. |
+| `sql/03_rls.sql` | **Rewritten, applied live, behaviour-verified.** 11,531 B. 4× `ENABLE ROW LEVEL SECURITY` first, then 11 policy pairs each preceded by `DROP POLICY IF EXISTS`. **R10 (`7916a0d`):** `orders_staff_update` WITH CHECK extended to two arms (unpaid-with-`paid_at IS NULL` / paid-with-`paid_at IS NOT NULL`) so a cashier can reprice a live claim, and `order_items_staff_write` (auth, FOR ALL, `WITH CHECK quantity >= 1 AND subtotal = unit_price * quantity`) added — see sec 9.4. **Staff identity 2026-10-21:** pointer comment only (`:18-22`) — identity is resolved by `staff_session()` in 07; no policy changed here, roster policies live IN 07 (apply order 01→…→07). |
 | `sql/04_realtime.sql` | **Corrected + applied live.** Publication claim replaced with the verified membership+delivery contract; executable `alter publication supabase_realtime add table orders;` added; v4 wire block replaced with the 2.118.0 `.on(...)` surface. |
 | `sql/05_seed.sql` | Applied live, idempotent (`ON CONFLICT (id) DO NOTHING`), no DELETE/TRUNCATE. |
-| `assets/api.js` | 14,761 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 19 fns (incl. the three claim-edit wrappers `getClaimView`/`setClaimItemQty`/`addClaimItem`); `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. |
+| `assets/api.js` | 14,761 B. JSON envelope `{success,data,error}`; `callSql` on `/rpc/`; thin wrappers over all 19 fns (incl. the three claim-edit wrappers `getClaimView`/`setClaimItemQty`/`addClaimItem`); `getRows`/`getMenu`/`getCategories`; `uploadImage` is a **POST** with `x-upsert: true` + binary body (docs-confirmed form, unchanged — the comment above it still says "PUT", fix in Phase 6); `deleteCategory`/`updateMenuItem` now send `p_*` keys (`p_category_id`/`p_fallback_category_id`, `p_menu_item_id`/`p_name`/`p_description`/`p_image_url`/`p_sizes_and_prices`/`p_is_available`); `fmtPeso`/`fmtTime`/`fmtCountdown`; session-token setters. **Staff identity 2026-10-21 (files only):** 9 exports added — `staffSession`/`rosterList`/`rosterAdd`/`rosterSuspend`/`rosterReactivate`/`rosterMoveStation`/`rosterResetPassword`/`signupAccount`/`newMemorablePassword` (28 → 37). |
 | `assets/config.js` | **Fixed 2026-10-24 (`b62fd2f`) and 2026-10-20 (`f9194aa`), 2,044 B.** Line 31 now carries `ttlMinutes: 30,` - the client mirror of the DB column default (they must change as a pair, sec 8.1). Priority unchanged (`window.SL_CONFIG` → `localStorage.sl_config` → committed default), but the committed default is now the **real** project URL + publishable key — no longer a `REPLACE_ME` placeholder — so a first-time visitor on GitHub Pages boots with no query params at all. Nothing secret is committed: publishable keys are public by design, the service-role key is nowhere in the repo. `ownerEmails` still has no committed value; it comes from `?owneremails=` → `sl_config`. |
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
@@ -269,17 +285,19 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `menu.html` | **29,158 B, fixed five times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`, `ce3b24e`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `cashier.html` | **30,555 B, reworked in the R10 pass (`7916a0d` + `ce3b24e`).** Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. New: the board is server-sorted and wrapped in a scrolling viewport (sec 9.3), and a looked-up claim renders as a cart-like editable card — per-line `+` / qty / `−` / `Remove` plus an "Add to this claim" size-chip panel — before Confirm Payment is allowed (sec 9.4). `claimBusy` guards every edit and the payment so one tap cannot race the next. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `kitchen.html` | 19,949 B, **unchanged through phase 7**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Hold (:186) — the 48 px KDS tap targets now actually apply |
-| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Void (:217) / Up (:361) / Down (:362) |
+| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Void (:217) / Up (:361) / Down (:362) · **Staff identity 2026-10-21 (+267 lines, files only):** Tab 5 Staff Roster — list (`roster_list`), add-employee **pairing rule** (`signupAccount` → `rosterAdd` with the SAME credentials, never one without the other), suspend/reactivate, move station, `LAST_OWNER_ONLY` refuses demoting the last active owner, reset shows the memorable temp password **ONCE** |
 | `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
 | `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. **R10:** `getOrderByCode` row now shows the `order_id` + `items[]` shape (its body IS `claim_view`), three RPC rows added (`getClaimView`/`setClaimItemQty`/`addClaimItem`), and the code table gained `CLAIM_NOT_OPEN`/`INVALID_QTY`/`LINE_NOT_FOUND`/`LAST_LINE_ONLY` with the verbatim cashier copy. |
 | `assets/ui.js` | **Does not exist** and is referenced by no page (only `MASTER_PLAN.md:99`). Deliberate deviation: each page ships its own inline UI, keeping dispatches inside the 1–3 file budget. Do not create dead code. |
 | `Sleepless.html` | Design reference only, never edited. Its dangling `staff.html` link at `:237` is out of scope. |
-| `assets/tailwind.compiled.css` | **New (2026-10-21, phase-8).** 12,139 B committed build artifact — the compiled Tailwind v3.4.17 stylesheet every page now loads at line 30. Regenerate on any token change: `node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m`. |
-| `tools/tailwind.config.js` + `tools/tailwind.src.css` | **New (2026-10-21).** The v3 build tooling behind that artifact. The config READS `assets/tokens.css` at build time, so `tokens.css` stays the single source of truth for brand colors — the compiled CSS carries the resolved hexes and no page re-declares one. |
+| `assets/tailwind.compiled.css` | **New (2026-10-21, phase-8).** 12,139 B committed build artifact — the compiled Tailwind v3.4.17 stylesheet every page now loads at line 30. Regenerate on any token change: `node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m`. **Rebuilt 2026-10-21: 12,252 B (+113 B)** once `login.html` joined the scan. |
+| `tools/tailwind.config.js` + `tools/tailwind.src.css` | **New (2026-10-21).** The v3 build tooling behind that artifact. The config READS `assets/tokens.css` at build time, so `tokens.css` stays the single source of truth for brand colors — the compiled CSS carries the resolved hexes and no page re-declares one. **Staff identity 2026-10-21:** `login.html` added to `content`, so the door contributes its own utilities. |
 | `functions/purge-expired/index.ts` | **New (2026-10-21), NOT deployed.** Dependency-free Deno Edge Function for the server-side TTL sweep: it mints a REAL staff JWT (password grant) because `sql/03_rls.sql:141` `orders_staff_delete` is `TO authenticated`, so a service-role sweep is denied by design. Secrets `SL_SB_URL`/`SL_PUBLISHABLE_KEY`/`SL_STAFF_EMAIL`/`SL_STAFF_PASSWORD` live only in Edge-Function env. Live deploy deferred: needs the signed-in dashboard + human approval of the staff-credential secrets. |
 | `tools/cron/purge-expired.json` | **New (2026-10-21), NOT registered.** The `*/15 * * * *` cron spec (array-wrapped so `supabase cron add -f` accepts it); its Notes carry the live-application steps. |
 | `package.json` + `package-lock.json` | **New (2026-10-21).** Pins `tailwindcss ^3.4.17` — the major version the CDN served at runtime, so the compiled output matches what the pages used to receive from `cdn.tailwindcss.com`. |
+| `sql/07_staff_roster.sql` | **New (2026-10-21), LIVE since 2026-10-21 (pasted in 4 chunks, all 201).** `staff_roster` table (email-keyed UNIQUE, `added_by` self-FK `ON DELETE RESTRICT`, no password column — `pw_note` is free text, never a secret) + its own RLS (`roster_authenticated_read`/`_write_insert`/`_write_update`/`_delete`, **no anon policy at all**) + 11 functions (`jwt_claims_email`, `roster_role_of`, `cap_word`, `make_memorable_password`, `staff_session`, `roster_list`, `roster_add`, `roster_suspend`, `roster_reactivate`, `roster_move_station`, `roster_reset_password`) + **3 seed rows** — `dev@sleepless-cafe.test` owner, `cashier-probe@…` cashier, `kitchen-probe@…` kitchen. Idempotent; **APPLY AFTER 06**. |
+| `login.html` | **New (2026-10-21), 215 lines, NOT linked from any page.** The staff door: credentials **typed in the page**, never read from the URL; `signIn` → `setSessionToken` → `staff_session` proves the roster row, then `window.location.replace` routes to `cashier.html` / `kitchen.html` / `owner.html` by role. Persists `{email,password}` to `localStorage.sl_auth` for the station boot. `noindex`, unlinked. |
 
 All five pages (`index.html`, `menu.html`, `cashier.html`, `kitchen.html`, `owner.html`) now carry the
 identical favicon block at lines 26–28, immediately after the `assets/app.css` `<link>` — added because
@@ -472,6 +490,10 @@ Four more defects reported from the live page, all in `menu.html` + `assets/app.
   fail-loud `sk_`-shaped key exit 1 with 0 leak hits. Artifacts gitignored (`.gitignore:7`, `:20`); tracked pages
   byte-exact restored, so the injector is net-zero on the tree.
 
+**F. Phase 8b — staff identity + login door (2026-10-21) — DONE, then APPLIED LIVE 2026-10-21 (human-authorized; sql/07 + 02 fences + 3 identities + QA green — record: §11).**
+- **Dispatches:** `backend-lead` ×3 (`sql/07_staff_roster.sql` authored → the 17 fences folded into `sql/02_functions.sql` → `sql/03_rls.sql` pointer comment) · `frontend-lead` ×2 (`login.html` + the `assets/api.js` roster exports → `owner.html` Tab 5) · `qa-engineer` (honest-degradation sweep). Every dispatch stayed inside the 1–3 file budget.
+- **QA honest-degradation table (the live DB has none of this applied):** `login.html` renders and the card answers an **HTTP card** on the missing `staff_session` RPC · owner Tab 5 boots and the roster gate is **honest** (refusal copy, not a blank tab) · 5a `PGRST202` and 5b `PGRST205` are the **absent-live proof** — the roster RPCs are not in the schema cache, so they are not routable, which is exactly what un-applied SQL must look like · 5c `ORDER_EXPIRED` proves the 02 station fences are **not live** (the live DB still runs the old presence-only gates) · `menu.html` regression **PASS** (0 console messages, catalogue renders, no new request).
+
 **REMAINING Phase-8 items:** live cron application (the steps are in the Notes of `tools/cron/purge-expired.json`
  — deploy the Edge Function, set its four secrets, then register the job), a Vercel account/domain, and the **manual
 phone run** of Gate A, which needs a real phone. Nothing was pushed this turn.
@@ -538,7 +560,7 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-HEAD  docs(phase-8): record the Phase 8 prep pass - compiled CSS, cron artifacts, injector exercised   <- this commit
+HEAD  d23beda docs(phase-8): record the Phase 8 prep pass - compiled CSS, cron artifacts, injector exercised   <- this commit
 e91ce3c feat(phase-8): add server-side TTL cron artifacts (Edge Function + cron spec)
 c30b540 feat(phase-8): compile Tailwind CSS and load it on all five pages
 21a55a5 docs(phase-7): record the R10 pass - cart qty between steppers, double-order guard, board sort + viewport, editable claim   <- was HEAD, pushed 2026-10-20
@@ -561,6 +583,11 @@ af1f4de docs: record Phase 7 completion - Gate A met live
 
 `main` is **3 ahead of `origin/main`** after this pass: the three phase-8 commits above (`c30b540`, `e91ce3c`, and
 this docs commit) are local only  —  nothing was pushed this turn, and a push needs an explicit human request.
+
+**No new commits this pass (staff identity).** HEAD is still `d23beda` (the phase-8 prep docs commit above);
+the staff-identity files (`sql/07_staff_roster.sql`, the amended `sql/02_functions.sql` + `sql/03_rls.sql`,
+`login.html`, `assets/api.js`, `owner.html`, `tools/tailwind.config.js`, `assets/tailwind.compiled.css`) are
+**UNCOMMITTED on top** — the tree is **dirty by design**, the human said no commits yet.
 `main == origin/main` after this turn: the human asked for a push, so `a7ab4bd..HEAD` — the TTL move, the
 `delete_category` refusal, the R9 docs, the two R10 code commits and this docs commit — is on the public branch,
 and GitHub Pages serves the R10 tree once its build finishes. Standing rule for future sessions: the agent does
@@ -782,6 +809,10 @@ server-side.
   which is why revenue moved ₱1,165.00 -> ₱3,765.00 over 9 completed orders (avg ₱418.33). The duplicate
   `09031` is gone from `orders` entirely.
 
+### 9.7 Deferred password decision (staff identity, 2026-10-21)
+
+**Employee self-change + owner reset APPLYING to a GoTrue identity = a service-role Edge-Function bundle, PENDING OWNER APPROVAL** — same approval class as the §10.2 cron decision. `roster_reset_password` in `sql/07_staff_roster.sql` GENERATES and returns a memorable temp password **ONCE**, and `roster_add` echoes the owner's proposed password **ONCE** so it can be copied to the new employee; neither can touch GoTrue, because signup/reset/self-change against an auth identity is a service-role operation and SQL has no path to it. What IS live in SQL is the generator: `make_memorable_password` (word-word-Number, CSPRNG-backed, 20 cafe words) — and it is what Tab 5's add-employee flow calls.
+
 ---
 
 ## 10. Phase 8 prep pass (2026-10-21)
@@ -835,3 +866,42 @@ in a brand-new `Doggy` category, from human menu edits made after the last hando
 
 0 console messages ×5 pages, computed styles exact, probes conform, DB drift noted. Nothing pushed: `main` is
 3 ahead of `origin/main` (a push needs an explicit human request).
+
+**Staff identity pass supersedes the `?email=&password=` URL hack at `login.html`** — credentials are typed in the page there; the station pages keep the `sl_auth` boot (they read `sl_auth` themselves, so no URL params are needed).
+
+---
+
+## 11. Staff identity — APPLY CHECKLIST (LIVE: applied 2026-10-21, human-authorized)
+
+**Status 2026-10-21: steps 1–4 below are DONE and live.** The human authorized the live apply and the agent
+executed it over the `database/query` endpoint (§1.x path, not the SQL Editor): sql/07 pasted in 4 chunks (all
+201), the amended sql/02 re-pasted in 5 chunks (all 201 — the 17 fences went live), 3 auth identities created via
+`POST /auth/v1/signup` (publishable key, autoconfirm), and QA probes green BOTH ways (cashier→`kitchen_queue` and
+kitchen→`list_active_pending` = `WRONG_STATION`; cashier→`create_menu_item` = `NOT_OWNER`; dev→`roster_list` = 3
+rows; anon→`staff_session` = `STAFF_NOT_REGISTERED`; `staff_session` answers owner/cashier/kitchen for the three
+probes). Passwords were reported to the human out-of-band and are **not** in any file. The checklist below is kept
+as the record of what was applied — read it as history, not as pending work. Apply in this order (as originally
+written, before the apply):
+
+1. **Paste `sql/07_staff_roster.sql` into the Dashboard SQL Editor.** Apply **after 06** — it assumes 01/02/03 already
+   exist and adds a NEW table plus its own RLS; it never edits an earlier file. The file is idempotent: every policy
+   carries a `DROP POLICY IF EXISTS`, every function is `CREATE OR REPLACE`, RLS is turned on with
+   `ALTER TABLE … ENABLE ROW LEVEL SECURITY`, and the seed INSERTs are `ON CONFLICT (email) DO NOTHING` — so a
+   re-paste is a strict no-op. No DELETE / TRUNCATE anywhere.
+2. **Re-paste the amended `sql/02_functions.sql`.** Every function is `CREATE OR REPLACE`, so re-pasting replaces the
+   live rows and the **17 fences go live**: 7 owner `NOT_OWNER` (`roster_role_of(email) <> 'owner'`) + 10 station
+   `WRONG_STATION`, each preceded by `STAFF_SESSION_REQUIRED` → `STAFF_NOT_REGISTERED`. Never run both sets at once —
+   the repo file is the truth.
+3. **Create the THREE auth identities via `POST /auth/v1/signup`** with the **publishable key** (the dashboard
+   **Confirm email** toggle is currently OFF, so autoconfirm creates the user straight away, no verification email).
+   **SQL cannot create auth identities** — it seeds the roster row only, so this is a separate human step. The exact
+   curl shape is in the header of `sql/07_staff_roster.sql` (`:50-56`). Emails: `dev@sleepless-cafe.test`,
+   `cashier-probe@sleepless-cafe.test` (the `staff-probe@…` name collided with a legacy unusable auth user — see
+   §1.5), `kitchen-probe@sleepless-cafe.test`. Passwords are **chosen by the human and must never be committed** —
+   not into these docs, not into a tracked shell file (reported out-of-band 2026-10-21).
+4. **Then `login.html` boots the door and QA can prove station blocking BOTH ways.** With the roster live and the
+   three identities created: the cashier probe is refused on `kitchen_queue` / `mark_served` = **WRONG_STATION**; the
+   kitchen probe is refused on the claim edits (`claim_view` / `set_claim_item_qty` / `add_claim_item`) =
+   **WRONG_STATION**; a signed-in **non-owner** is refused on menu writes = **NOT_OWNER**. Until steps 1–3 are done,
+   every one of those probes answers `PGRST202` / `PGRST205` — that is the honest absent-live state, not a regression.
+   (Superseded 2026-10-21: steps 1–3 are done, the probes now answer the envelopes listed in the status block above.)
