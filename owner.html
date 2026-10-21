@@ -113,6 +113,10 @@
        was ACTUALLY read, so Export CSV exports exactly what the chart shows. */
     let salesFocus = null;
     let salesWindow = null;
+    /* Sweep 2 item 7: the Focus list is now OUR panel of chips rather than a
+       native <select>, so whether it is showing is OUR state — a repaint cannot
+       close it, which a browser popup could (see focusToggle below). */
+    let focusOpen = false;
     let turn = null;            // last turnoverStats payload
     let turnErr = null;
     let turnDays = 30;
@@ -271,15 +275,15 @@
                 <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="30">30 days</button>
                 <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="365">365 days</button>
                 <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Focus</span>
-                ${focusSelect()}
+                ${focusToggle()}
               </div>`;
         if (!sales) {
             const note = salesErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(salesErr)}</p>` : '';
-            return `${controls}${note}${renderClaims()}`;
+            return `${controls}${focusPanel()}${note}${renderClaims()}`;
         }
         const buckets = sales.buckets || [];
         const exportBtn = `<button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-export>Export CSV</button>`;
-        return `${controls}
+        return `${controls}${focusPanel()}
             <div class="glass-card rounded-xl p-5 my-4">
               <div class="flex items-center gap-6 flex-wrap">
                 <span class="font-mono text-brand-accentLight text-2xl">${fmtPeso(sales.revenue)}</span>
@@ -560,10 +564,37 @@
         for (let yy = sy; yy <= new Date(now).getUTCFullYear(); yy++) out.push(String(yy));
         return out;
     }
-    function focusSelect() {
-        const opts = focusLabels().map((l) => `<option value="${esc(l)}" data-focus-label="${esc(l)}">${esc(l)}</option>`).join('');
+    /* Sweep 2 item 7 ("when im clicking focus, it open and closes without me
+       being able to choose"): the control was a native <select>. Once a <select>
+       is styled — ours carries rounded-lg, a background and a border — Chrome
+       stops drawing the OS picker and renders its own dropdown as a popup that
+       OPENS ON MOUSEDOWN AND CLOSES ON MOUSEUP. One tap therefore flashes the
+       list and selects nothing, which is the reported symptom; on a phone it is
+       worse, since the picker is painted with OS colors and the options come out
+       dark-on-dark. The list is therefore ours: tapping Focus opens a panel of
+       chips that STAYS open until a period is tapped or Focus is tapped again,
+       every chip a 48px thumb target carrying the same data-focus-label the
+       handler already reads. The panel is ordinary DOM, so repainting the Sales
+       tab cannot close it the way a browser popup could.
+       The labels themselves are unchanged — still focusLabels(), still calendar-
+       generated in UTC, so an empty period stays selectable. */
+    function focusToggle() {
         const word = (salesGrain === 'daily') ? 'days' : (salesGrain === 'monthly' ? 'months' : 'years');
-        return `<select data-sales-focus class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border"><option value="" data-focus-label="">All ${word}</option>${opts}</select>`;
+        const label = salesFocus ? `Focused on ${esc(String(salesFocus))}` : `Focus all ${word}`;
+        return `<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap" data-focus-toggle>${label}<i class="fa-solid fa-chevron-down ml-1 text-xs"></i></button>`;
+    }
+    function focusPanel() {
+        if (!focusOpen) return '';
+        const chips = focusLabels().map((l) => {
+            const on = String(l) === String(salesFocus);
+            /* the period already in focus wears a filled chip, so the owner can
+               see what is filtered without reading the window line back */
+            return `<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap${on ? ' bg-brand-accent/30 border border-brand-accent' : ''}" data-focus-label="${esc(l)}">${esc(l)}</button>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-3 my-3">
+                <p class="text-brand-muted text-xs uppercase tracking-wider mb-2">Tap one period — the chart then shows that period broken down</p>
+                <div class="flex gap-2 flex-wrap">${chips}<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap" data-focus-toggle>Close focus</button></div>
+              </div>`;
     }
     async function loadSales() {
         salesWindow = focusWindow(salesGrain, salesFocus);
@@ -904,16 +935,23 @@
         /* A grain change or a re-range invalidates a focus label (the labels
            belong to a grain and a window), so focus resets — silently and
            without a stale filter quietly still narrowing the next read. */
-        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; salesFocus = null; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
-        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); salesFocus = null; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
-        else if (t.dataset.focusLabel !== undefined) { salesFocus = t.dataset.focusLabel || null; void (async () => { await loadSales(); paint(); })(); }
-        else if (t.dataset.salesFocus !== undefined) {
-            /* tapping the select box itself rather than an option: read the
-               currently selected option, same helper the menu tabs use. */
-            const sel = document.querySelector('[data-sales-focus]');
-            const opt = sel ? selectedOption(sel) : null;
-            salesFocus = opt ? (opt.dataset.focusLabel ?? null) : null;
+        /* A grain change or a re-range invalidates a focus label (the labels
+           belong to a grain and a window), so focus resets — silently and
+           without a stale filter quietly still narrowing the next read. The open
+           panel resets with it, since the chips on screen belong to the OLD
+           grain and would otherwise be a list of labels that no longer exist. */
+        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; salesFocus = null; focusOpen = false; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); salesFocus = null; focusOpen = false; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.focusLabel !== undefined) {
+            salesFocus = t.dataset.focusLabel || null;
+            focusOpen = false;   /* the choice is made, so the panel folds away */
             void (async () => { await loadSales(); paint(); })();
+        }
+        else if (t.dataset.focusToggle !== undefined) {
+            /* opening/closing the panel is a paint, not a read — nothing about
+               the numbers changes until a chip is actually tapped. */
+            focusOpen = !focusOpen;
+            paint();
         }
         else if (t.dataset.export !== undefined) void exportCsv();
         else if (t.dataset.turnDays !== undefined) { turnDays = Number(t.dataset.turnDays); void (async () => { await loadTurnover(); paint(); })(); }

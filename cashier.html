@@ -32,16 +32,28 @@
 
 <body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
 
-    <!-- STICKY GLASS HEADER: wordmark + live clock (HH:MM:SS, 1s tick). -->
+    <!-- STICKY GLASS HEADER: wordmark + live clock (HH:MM:SS, 1s tick).
+         Sweep 2 (2026-10-21), items 3 and 4: the Log out button and the WHO line
+         moved UP into this header. The button used to sit at the very bottom of
+         the code-field card, under everything the cashier is typing over, so on a
+         phone a thumb had to hunt the whole page to close the register; the name
+         line used to sit INSIDE the board card, which is repainted every 5 s, so
+         the name could be mid-repaint exactly when someone glanced up to check
+         whose register this was. The header is sticky and never repainted, so both
+         stay put. min-h-[48px] keeps the button a real thumb target, and `hidden`
+         until boot proves a session means there is never a Log out to tap when
+         nobody is signed in (nothing to log out of). -->
     <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
         <div class="max-w-7xl w-full mx-auto px-4 py-2">
-            <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-3 flex-wrap">
                 <i class="fa-solid fa-cash-register text-brand-accent text-2xl mr-2"></i>
                 <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Cashier</h1>
+                <button id="logoutbtn" hidden data-logout class="rounded-lg px-3 py-2 min-h-[48px] text-xs bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap ml-3">Log out</button>
             </div>
             <p class="text-brand-muted text-xs mt-1">
                 Counter terminal · <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
             </p>
+            <p id="wholine" class="text-brand-accentLight text-xs mt-1"></p>
         </div>
     </header>
 
@@ -175,7 +187,19 @@
         staffEmail = null;
         staffName = null;
         document.getElementById('staffid').textContent = 'nobody';
+        paintWhoLine();
+        document.getElementById('logoutbtn').hidden = true;
         renderAuthGate(copy);
+        /* Sweep 2 item 5: logging out hands the staff member BACK to the staff
+           door instead of leaving them parked on a closed register. The gate copy
+           stays on screen for a beat first, because with an idle sign-out that
+           line is the whole answer to "why is the board gone" — a silent redirect
+           would throw it away. location.replace (not href) so the back button
+           cannot walk a signed-out cashier back onto a board; sl_auth is already
+           removed above, so the door shows the form rather than bootting straight
+           back in from memory. login.html is the only place credentials get typed
+           again, which is why this leg exists at all. */
+        setTimeout(() => { try { window.location.replace('login.html'); } catch { /* page already gone */ } }, 2500);
     }
 
     /* --- auth gate card (no session = no board) -------------------------- */
@@ -210,10 +234,17 @@
 
     /* the register shows WHO is standing at it, so a shared terminal can never
        be edited by the wrong pair of hands — display_name from sql/07, never
-       the email, never the credential. */
-    function whoLine() {
-        if (!staffName) return '';
-        return `<p class="text-brand-accentLight text-xs mt-2">${esc(WHO_COPY(staffName))}</p>`;
+       the email, never the credential.
+       Sweep 2 item 4: this line is written into the STICKY HEADER (the empty
+       <p id="wholine"> under "Counter terminal"), not into the board card. The
+       board is repainted every 5 s, so a name rendered inside it could be gone
+       mid-repaint when someone looked up; the header never repaints. textContent
+       rather than innerHTML — display_name is server-supplied and must never be
+       parsed as markup. */
+    function paintWhoLine() {
+        const el = document.getElementById('wholine');
+        if (!el) return;
+        el.textContent = staffName ? WHO_COPY(staffName) : '';
     }
 
     function renderBoard() {
@@ -245,7 +276,6 @@
                 </div>
                 ${scrollNote}
                 ${note}
-                ${whoLine()}
               </div>`;
     }
 
@@ -281,18 +311,30 @@
         if (!menu.length) {
             return `<p class="text-brand-muted text-xs mt-2">The menu could not be loaded on this terminal, so this claim can be adjusted but not added to.</p>`;
         }
-        const chips = menu.map((m) => {
+        /* Sweep 2 item 1: the size chips used to be inline `text-xs` buttons with
+           no padding and no minimum height, so on a phone two sizes sat a few
+           pixels apart and a thumb hit the wrong one (or two at once). They are
+           now a GRID, not a run of inline text: three equal columns, so the sizes
+           line up in the same vertical lanes down every item row, with a real
+           gap between rows and a 48 px minimum height per chip (assets/app.css
+           .claim-add-*). Mobile-first, the item name sits ABOVE its sizes so the
+           chips get the full width of a 390 px screen; from sm up the name moves
+           back to the left of its row. The grid lives in app.css because it is a
+           layout primitive, same as .cart-line and .board-scroll — no brand color
+           is declared here, and no amount is: add_claim_item still pulls unit_price
+           out of menu_items itself. */
+        const rows = menu.map((m) => {
             const sizes = (m.sizes_and_prices ?? []).map((s) =>
-                `<button class="size-chip rounded-md text-xs" data-claim-add data-claim-menu="${esc(m.id)}" data-claim-size="${esc(s.size)}">${esc(s.size)}</button>`).join('');
+                `<button class="size-chip rounded-lg" data-claim-add data-claim-menu="${esc(m.id)}" data-claim-size="${esc(s.size)}">${esc(s.size)}</button>`).join('');
             if (!sizes) return '';
-            return `<div class="flex items-center gap-2 flex-wrap my-1">
-                    <span class="text-brand-cream text-sm whitespace-nowrap">${esc(m.name)}</span>
-                    <span class="flex gap-2 flex-wrap">${sizes}</span>
+            return `<div class="claim-add-row">
+                    <span class="claim-add-name">${esc(m.name)}</span>
+                    <span class="claim-add-sizes">${sizes}</span>
                   </div>`;
         }).join('');
         return `<div class="rounded-lg p-3 bg-brand-card/40 border border-brand-border/40 mt-3">
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add to this claim — tap a size</p>
-                ${chips}
+                ${rows}
               </div>`;
     }
 
@@ -501,14 +543,25 @@
     /* --- code input: big, monospace, typed or scanned -------------------- */
     function openCodeInput() {
         const host = document.getElementById('codefield');
+        /* Sweep 2 item 2: the input carried `box-content`, i.e. box-sizing:
+           content-box, so `w-full` sized only the CONTENT and the padding
+           (p-3) plus the border were added OUTSIDE it — the input box measured
+           ~34 px wider than the card's content box and its border ran past the
+           card's own border on the right, which is the misalignment the owner
+           photographed. `box-border` makes w-full include padding and border,
+           so the input sits flush inside the card's p-4 inset. The buttons
+           belong INSIDE the card now (the old markup closed the card right after
+           the input, leaving Look Up and Log out as loose siblings under it).
+           Log out itself moved to the sticky header — item 3 — so it is gone
+           from here. */
         host.innerHTML =
             `<div class="glass-card rounded-xl p-4 my-4">
                <label class="text-brand-muted text-xs uppercase tracking-wider">Claim code — type or scan</label>
                <input type="text" placeholder="5-digit code" spellcheck="false" autocomplete="off"
-                      class="font-mono text-3xl tracking-widest rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
-                      data-code-input></div>
-               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-lookup>Look Up</button>
-               <button class="rounded-lg px-3 py-2 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap mt-2" data-logout>Log out</button>`;
+                      class="font-mono text-3xl tracking-widest rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-border"
+                      data-code-input>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2 w-full" data-lookup>Look Up</button>
+             </div>`;
         const input = host.querySelector('[data-code-input]');
         /* `change` on a bare input only fires on commit, so the Look Up button
            is the reliable path; the listener stays as a convenience. */
@@ -556,6 +609,10 @@
         staffName = String(me.display_name ?? '') || staffEmail;
         document.getElementById('staffid').textContent = staffName;
         if (String(me.role ?? '') !== 'cashier') { renderAuthGate(NOT_CASHIER); return; }
+        /* a session exists and stands at the register, so the header can now say
+           WHO is here and offer the Log out tap (item 3/4) */
+        paintWhoLine();
+        document.getElementById('logoutbtn').hidden = false;
         lastTap = Date.now();
 
         openCodeInput();

@@ -188,11 +188,20 @@
         const holdBtn = holding
             ? ''
             : `<button class="rounded-lg whitespace-nowrap text-xs min-h-[48px] px-3 py-2 mt-2 bg-brand-card/60 border border-brand-border text-brand-cream" data-hold>Hold</button>`;
+        /* Sweep 2 item 6: the three header pieces used to sit in a bare flex row
+           with no gap, so on the board they ran together — "ownertry7 cups72818"
+           read as one string, and the 5-digit code (already small, already
+           letter-spaced) melted into the cups total next to it. A cook calling an
+           order off a wall board cannot afford that. gap-4 is the minimum air
+           between the three, and the code now wears its own small chip so it reads
+           as a separate reference number at a glance rather than trailing digits.
+           space-between is kept so on a wide wall tablet the three still spread
+           across the card instead of clustering left. */
         return `<div class="glass-card rounded-xl p-5 my-4" data-order-card data-order-id="${esc(r.order_id ?? '')}" data-code="${esc(code)}">
-                <div class="flex items-baseline space-between flex-wrap">
+                <div class="flex items-baseline space-between gap-4 flex-wrap">
                   <p class="text-brand-cream text-2xl font-serif whitespace-nowrap">${esc(r.customer_name ?? '')}</p>
                   <span class="font-mono text-brand-accentLight text-2xl whitespace-nowrap">${cups} cups</span>
-                  <div class="font-mono text-brand-accentLight text-xs tracking-widest" style="letter-spacing:0.3em">${esc(code)}</div>
+                  <span class="rounded-md px-2 py-1 bg-brand-card border border-brand-border/60 font-mono text-brand-accentLight text-xs tracking-widest whitespace-nowrap" style="letter-spacing:0.3em">${esc(code)}</span>
                 </div>
                 <div class="flex items-center gap-3 mt-2 flex-wrap">
                   <span class="text-brand-muted text-xs uppercase tracking-wider">Paid ${fmtTime(r.paid_at)}</span>
