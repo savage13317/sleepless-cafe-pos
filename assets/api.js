@@ -211,6 +211,14 @@ export async function salesSummary(from, to, grain) {
 export async function turnoverStats(from, to) {
   return await callSql('turnover_stats', { from_time: from, to_time: to });
 }
+/* sales_report is the CSV-grade sibling of sales_summary: it answers the ROWS
+   behind the headline numbers, one grain-appropriate table per export (daily
+   -> per-sale rows with items/cups/cash/turnaround; monthly -> per-day cups +
+   cash; yearly -> per-month cups + cash). Completed sales only, same window
+   semantics as sales_summary, so a page can export exactly what it just showed. */
+export async function salesReport(from, to, grain) {
+  return await callSql('sales_report', { from_time: from, to_time: to, grain });
+}
 export async function createCategory(name, displayOrder) {
   return await callSql('create_category', { name, display_order: displayOrder });
 }

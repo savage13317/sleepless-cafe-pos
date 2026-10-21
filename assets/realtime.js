@@ -49,6 +49,15 @@
    callback (kitchen_queue()). Both modes deliver the same jsonb, so the UI
    looks identical either way — no banner, no degraded view. `mode` tells the
    page which one it is on, for its status dot.
+
+   • The poll now runs ALONGSIDE a live socket, not only behind a dead one: a
+     WebSocket can die silently (a throttled/backgrounded tab kills the
+     connection without ever firing a 'close' event, and a long idle gap can
+     drop it the same way), so with nothing but the socket the board freezes
+     and the cook has to refresh. A backstop poll timer always runs while the
+     socket lives, so a silently-dead socket can never leave the board frozen.
+     The socket still repaints instantly when it works; same callback, same
+     payload, so both paths look identical.
    =========================================================================== */
 
 import { CONFIG } from './config.js';
@@ -84,6 +93,16 @@ export function stopWatching() {
 export async function startWatching(onEvent, poll) {
   stopWatching();
   mode = 'poll';                     // pessimistic until the socket proves itself
+
+  /* BACKSTOP (item: paid orders appeared late on the KDS): a WebSocket can die
+     silently - a throttled/backgrounded tab kills the connection without ever
+     firing a 'close' event, and a long idle gap can drop it the same way. With
+     nothing but the socket, the board then freezes and the cook has to refresh
+     the page. So the poll timer runs ALONGSIDE a live socket instead of only
+     behind a dead one: the socket still repaints instantly when it works, and
+     a silently-dead socket can never leave the board frozen. Same callback,
+     same payload, so both paths look identical. */
+  startPolling(poll);
 
   let client = null;
   try {
