@@ -155,6 +155,56 @@ body {
   font-weight: 700;
 }
 
+/* --- Sweep 2 (2026-10-21): cashier "Add to this claim" size grid ----------
+   The owner complained the size chips were "small and crowded" on a phone. The
+   old panel was a run of inline `text-xs` buttons: no padding, no minimum height,
+   so two sizes sat a few pixels apart and a thumb landed on the wrong one. A
+   plain flex row does not fix it either — the chips then drift to whatever width
+   their label is, so the sizes never line up down the item rows and a cook aiming
+   at "Large" in the third lane guesses. EQUAL lanes give every item the same
+   lane width, so the tap position is predictable down the whole panel; auto-fit
+   collapses the lanes an item does not use, so a two-size drink gets two wide
+   lanes rather than one dead third column. The 48px minimum height is the same
+   thumb target the rest of the app already uses.
+   Mobile-first the name sits above its sizes (a 390px screen has no room for a
+   name column plus three 72px chips), from 40rem up the row goes side by side.
+   The sizing rule is scoped to .claim-add-sizes so menu.html's own size chips
+   (which carry the selected/unselected state above) keep their old metrics.
+   No brand color here — layout only; .size-chip above still owns the border. */
+.claim-add-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  row-gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.claim-add-name {
+  display: block;
+  font-weight: 600;
+  font-size: 1rem;
+}
+.claim-add-sizes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4.5rem, 1fr));
+  gap: 0.5rem;
+  justify-items: center;
+}
+.claim-add-sizes > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  max-width: 14rem;
+  padding: 0 0.75rem;
+}
+@media (min-width: 40rem) {
+  .claim-add-row {
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    column-gap: 0.75rem;
+    row-gap: 0;
+    align-items: center;
+  }
+}
+
 /* --- Phase 7 (R10 pass): cashier board viewport (cashier.html) ------------
    Ten unpaid claims is roughly what a counter terminal can show at once, so the
    table is capped at ten data rows and the container scrolls instead of the
