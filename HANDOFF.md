@@ -879,9 +879,12 @@ executed it over the `database/query` endpoint (§1.x path, not the SQL Editor):
 `POST /auth/v1/signup` (publishable key, autoconfirm), and QA probes green BOTH ways (cashier→`kitchen_queue` and
 kitchen→`list_active_pending` = `WRONG_STATION`; cashier→`create_menu_item` = `NOT_OWNER`; dev→`roster_list` = 3
 rows; anon→`staff_session` = `STAFF_NOT_REGISTERED`; `staff_session` answers owner/cashier/kitchen for the three
-probes). Passwords were reported to the human out-of-band and are **not** in any file. The checklist below is kept
-as the record of what was applied — read it as history, not as pending work. Apply in this order (as originally
-written, before the apply):
+probes). Passwords were reported to the human out-of-band and are **not** in any file. Shipped the same day: 4 conventional
+commits (`deae3df` roster SQL · `779ce0c` login door · `d8a4a15` Tailwind scan · `da26aa4` docs) pushed `21a55a5..da26aa4`
+to `origin/main`, and the browser door was then **PROVEN on the public host** — `login.html` routed cashier-probe→`cashier.html`,
+kitchen-probe→`kitchen.html`, dev→`owner.html` (Tab 5 renders the 3 roster rows with live `last_seen_at`), and
+`stranger@sleepless-cafe.test` stayed on the door with the honest copy. The checklist below is kept as the record of
+what was applied — read it as history, not as pending work. Apply in this order (as originally written, before the apply):
 
 1. **Paste `sql/07_staff_roster.sql` into the Dashboard SQL Editor.** Apply **after 06** — it assumes 01/02/03 already
    exist and adds a NEW table plus its own RLS; it never edits an earlier file. The file is idempotent: every policy

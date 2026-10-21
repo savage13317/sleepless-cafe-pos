@@ -287,7 +287,7 @@ and `localStorage` cleared, is green — see HANDOFF §4 D2 for the audit and th
 - [x] TTL proven by deletion, not hiding: probe order `code='90001'` with `expires_at` 30 min in the past; the sweep deleted it — `SELECT` for that code → **no row**, `order_items` for that `order_id` → **0**. (Sweep ran with an owner JWT: `orders_staff_delete` is authenticated-only, so an anon sweep cannot delete — that is the RLS boundary, not a TTL bug.)
 - [x] Permanence proven — 10 consecutive authenticated `list_active_pending` calls left all 4 served orders plus the live pending order intact, `order_items` unchanged (5), analytics unchanged
 - [x] `Sleepless.html` untouched (governance: do not refactor unrelated files)
-- [x] Staff roster live (applied 2026-10-21): sql/07 applied + 3 auth identities created + station blocking proven both ways (login.html door, WRONG_STATION/NOT_OWNER probes) — probes green at the RPC layer (cashier→`kitchen_queue` / kitchen→`list_active_pending` = `WRONG_STATION`, cashier→`create_menu_item` = `NOT_OWNER`, anon→`STAFF_NOT_REGISTERED`); the login.html browser door itself still needs a served build (Pages serves the old `origin/main`)
+- [x] Staff roster live (applied 2026-10-21): sql/07 applied + 3 auth identities created + station blocking proven both ways (login.html door, WRONG_STATION/NOT_OWNER probes) — probes green at the RPC layer (cashier→`kitchen_queue` / kitchen→`list_active_pending` = `WRONG_STATION`, cashier→`create_menu_item` = `NOT_OWNER`, anon→`STAFF_NOT_REGISTERED`); the browser door PROVEN on the public host after the `da26aa4` push (login.html → cashier / kitchen / owner routings, Tab 5 renders 3 rows, stranger refused with honest copy)
 
 ### Gate B — Vercel (production / operational)
 - [ ] Gate A fully green
