@@ -164,7 +164,7 @@ reached by scrolling; and a looked-up claim now renders as a cart-like editable 
 extended `orders_staff_update` fence in `sql/03_rls.sql` (11 policy pairs) — so a cashier can change a quantity,
 drop a line, or add an item before Confirm Payment, with prices always derived from `menu_items` and an empty
 claim refused as `LAST_LINE_ONLY` because an empty claim is a void. **Next up: Phase 8 (Vercel go-live),
-parked until the phone run and a Vercel account/domain exist.**
+parked until the phone run and a Vercel account/domain exist.** **Phase-8 prep done 2026-10-21** (compiled CSS committed + all five pages swapped; cron artifacts authored; `tools/inject-config.mjs` exercised 4/4 locally) - the Phase 8 gate is still open: the manual phone run, a Vercel account/domain, and live cron application remain.
 
 Phases 2–5 are **strictly ordered** (customer before cashier before kitchen before owner) because each page depends on the previous page's DB side effects being real.
 
@@ -284,8 +284,8 @@ and `localStorage` cleared, is green — see HANDOFF §4 D2 for the audit and th
 
 ### Gate B — Vercel (production / operational)
 - [ ] Gate A fully green
-- [ ] `tools/inject-config.mjs` + env vars replace the query-param hack
-- [ ] Tailwind CDN replaced by compiled CSS (no dev-only CDN in prod)
+- [ ] `tools/inject-config.mjs` + env vars replace the query-param hack (exercised 4/4 locally 2026-10-21; not yet deployed  —  no Vercel project)
+- [x] Tailwind CDN replaced by compiled CSS (no dev-only CDN in prod)  —  done 2026-10-21 repo-side: assets/tailwind.compiled.css committed, all five pages load it after app.css (CDN cascade order), 0 console messages on the local sweep; min-h-[48px] latent fix landed
 - [ ] `noindex` guard removed from public customer page, retained on `owner.html`/`cashier.html`/`kitchen.html`
 - [ ] Custom domain + HTTPS; `vercel.json` cache headers (HTML `max-age=0`, assets `max-age=31536000`)
 - [ ] Supabase Cron → `purge_expired_orders()` scheduled (server-side TTL, not client-only)
@@ -319,6 +319,7 @@ and `localStorage` cleared, is green — see HANDOFF §4 D2 for the audit and th
 8. **Claim window is 30 minutes, and the DB owns it (owner decision 2026-10-20).** The window moved from 60 to 30 minutes. The single authority is the column default `sql/01_schema.sql:74` `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'`; `assets/config.js` `ttlMinutes: 30` (line 31) is the client mirror and the two must always be changed as a pair, because RLS forbids the customer reading its own order back (`orders` has no anon SELECT policy, `get_order_by_code` is staff-only) so the copy on the success screen can only come from config. `menu.html` renders it through a `ttlMinutes()` helper, never a literal; `index.html` is a static landing page with no config bootstrap, so its two "30 minutes" strings are literals and are the documented drift risk. `cashier.html`/`kitchen.html`/`owner.html` need no edit - the countdown is server-derived (`seconds_remaining`), and the cashier LAST CALL threshold (120 s) is TTL-independent.
 
 9. **`delete_category()` refuses, it does not corrupt (resolved 2026-10-20 during the full-system test).** `order_items.menu_item_id` carries no `ON DELETE` clause on purpose, because paid orders are the permanent sales record. Deleting a menu item still referenced by `order_items` would raise a raw FK violation (SQLSTATE 23503) and break the JSON-envelope contract, so the function counts referenced items BEFORE any DELETE and returns `{success:false,error:{code:"MENU_ITEM_IN_USE"}}`; a nested `BEGIN ... EXCEPTION WHEN SQLSTATE '23503' ... END` is the race safety net that rolls the partial DELETE back, so the category row is never dropped on a refusal. Categories whose items were never ordered still delete cleanly, and the fallback path (`UPDATE ... SET category_id`) cannot violate the FK.
+10. **Server-side TTL cron (Phase 8)  —  PENDING OWNER APPROVAL, not yet locked.** The artifacts are committed (`functions/purge-expired/index.ts` + `tools/cron/purge-expired.json`, `*/15 * * * *`) and nothing is deployed. Two decisions need a human yes before this can be locked. **(a) Credential provisioning:** the Edge Function mints a REAL staff JWT (password grant) rather than using the service-role key, because `sql/03_rls.sql:141` `orders_staff_delete` is `FOR DELETE TO authenticated USING (status = 'pending_payment')`  —  a service-role sweep is denied by design, so the RLS boundary Gate A proved cannot be bypassed from the server side. That makes `SL_STAFF_EMAIL` / `SL_STAFF_PASSWORD` (plus `SL_SB_URL` / `SL_PUBLISHABLE_KEY`) Edge-Function secrets, and putting a staff password in an Edge-Function env is the credential decision that needs explicit approval; secrets are never committed and never leave Edge-Function env. **(b) Which staff identity the cron uses:** a dedicated cron staff account versus reusing `staff-gate`. Until both are answered the lazy client-side sweep in `list_active_pending` / `kitchen_queue` is the only TTL enforcement, and it stays the self-healing backstop either way.
 
 ---
 

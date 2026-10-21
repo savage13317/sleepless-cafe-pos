@@ -7,7 +7,7 @@ host** — Gate A green except the manual phone run — the Gate A audit fixed t
 (commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
 `2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
 no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
-payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 (Vercel go-live) is next and parked.**
+payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets).
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -226,6 +226,11 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   behaviour, not a bug. The claim window is now **30 minutes** (`sql/01_schema.sql:74`
   `expires_at timestamptz NOT NULL DEFAULT now() + interval '30 minutes'`); proof from a live order: created
   `06:16:17.411762Z`, `expires_at` `06:46:17.411762Z` — exactly 30 min, `seconds_remaining` 1786.
+- **Live DB drift (re-probed 2026-10-21 during the phase-8 QA sweep):** the live DB now renders **14 visible
+  items over 5 categories · `GM Americano` added inside Coffee and `Coopper` in a brand-new `Doggy` category,
+  from human menu edits made after the last handoff. The 12-seed counts in this section (and in the section-3 seed
+  rows) are **superseded** by these live numbers; the hidden `Test Ristretto R9` item (undeletable while a paid
+  order still references it) is unchanged.
 - Auth users (password grant, "Confirm email" OFF → autoconfirm): owner `owner@sleepless-cafe.test`
   (`e5db228e-0041-413f-a0f7-279e1adf5db9`) and staff `staff-gate@sleepless-cafe.test`
   (`3427770d-2f86-479a-b369-ff459e23484e`). The two `staff-probe` users (`890bb2f2-4ee3-45ce-9935-392dd032663d`,
@@ -261,15 +266,20 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `assets/favicon.svg` | **New (2026-10-24).** 1,237 B self-contained brand mark. Declared by all five pages. Its three hexes (`#140c08`/`#d48d37`/`#f8f1e5`) mirror `--brand-dark`/`--brand-accent`/`--brand-cream` in `assets/tokens.css` — a standalone favicon is fetched as its own document and cannot read `var()`, so this is the one documented exception to "tokens.css is the only place brand colors are defined". |
 | `assets/realtime.js` | **Functional, ported to supabase-js 2.118.0.** Public surface unchanged (`mode`, `stopWatching()`, `startWatching(onEvent, poll)`), so `kitchen.html` needed no edit. WS confirmed via `wait:true` before `mode='ws'`; honest polling fallback; per-socket `dead` flag teardown. |
 | `assets/app.css` | **9,662 B, extended four times (`2342c83`, `eab2481`, `1696a96`, `ce3b24e`).** Component blocks per page. New this pass: `.size-chip` / `.size-chip.selected` (offered = outline only, selected = filled background + glow + bolder text) and `.cart-btn` / `.cart-btn-remove` (40 px tap targets; the red on Remove is a **semantic** status color, not brand identity), then `.cart-line` + `.cart-price` (sec 4 D4) which line the amount and the steppers down the cart. Every brand color stays `var(--brand-*)` through `color-mix` — no new brand hex hardcoded. **Cache note:** Pages serves this file with `Cache-Control: max-age=600`, so a returning visitor can keep the previous stylesheet for up to 10 minutes after a push. |
-| `menu.html` | **29,158 B, fixed five times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`, `ce3b24e`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` |
-| `cashier.html` | **30,555 B, reworked in the R10 pass (`7916a0d` + `ce3b24e`).** Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. New: the board is server-sorted and wrapped in a scrolling viewport (sec 9.3), and a looked-up claim renders as a cart-like editable card — per-line `+` / qty / `−` / `Remove` plus an "Add to this claim" size-chip panel — before Confirm Payment is allowed (sec 9.4). `claimBusy` guards every edit and the payment so one tap cannot race the next. |
-| `kitchen.html` | 19,949 B, **unchanged**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). |
-| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. |
-| `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. |
+| `menu.html` | **29,158 B, fixed five times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`, `ce3b24e`).** Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
+| `cashier.html` | **30,555 B, reworked in the R10 pass (`7916a0d` + `ce3b24e`).** Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. New: the board is server-sorted and wrapped in a scrolling viewport (sec 9.3), and a looked-up claim renders as a cart-like editable card — per-line `+` / qty / `−` / `Remove` plus an "Add to this claim" size-chip panel — before Confirm Payment is allowed (sec 9.4). `claimBusy` guards every edit and the payment so one tap cannot race the next. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
+| `kitchen.html` | 19,949 B, **unchanged through phase 7**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Hold (:186) — the 48 px KDS tap targets now actually apply |
+| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Void (:217) / Up (:361) / Down (:362) |
+| `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
 | `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. **R10:** `getOrderByCode` row now shows the `order_id` + `items[]` shape (its body IS `claim_view`), three RPC rows added (`getClaimView`/`setClaimItemQty`/`addClaimItem`), and the code table gained `CLAIM_NOT_OPEN`/`INVALID_QTY`/`LINE_NOT_FOUND`/`LAST_LINE_ONLY` with the verbatim cashier copy. |
 | `assets/ui.js` | **Does not exist** and is referenced by no page (only `MASTER_PLAN.md:99`). Deliberate deviation: each page ships its own inline UI, keeping dispatches inside the 1–3 file budget. Do not create dead code. |
 | `Sleepless.html` | Design reference only, never edited. Its dangling `staff.html` link at `:237` is out of scope. |
+| `assets/tailwind.compiled.css` | **New (2026-10-21, phase-8).** 12,139 B committed build artifact — the compiled Tailwind v3.4.17 stylesheet every page now loads at line 30. Regenerate on any token change: `node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m`. |
+| `tools/tailwind.config.js` + `tools/tailwind.src.css` | **New (2026-10-21).** The v3 build tooling behind that artifact. The config READS `assets/tokens.css` at build time, so `tokens.css` stays the single source of truth for brand colors — the compiled CSS carries the resolved hexes and no page re-declares one. |
+| `functions/purge-expired/index.ts` | **New (2026-10-21), NOT deployed.** Dependency-free Deno Edge Function for the server-side TTL sweep: it mints a REAL staff JWT (password grant) because `sql/03_rls.sql:141` `orders_staff_delete` is `TO authenticated`, so a service-role sweep is denied by design. Secrets `SL_SB_URL`/`SL_PUBLISHABLE_KEY`/`SL_STAFF_EMAIL`/`SL_STAFF_PASSWORD` live only in Edge-Function env. Live deploy deferred: needs the signed-in dashboard + human approval of the staff-credential secrets. |
+| `tools/cron/purge-expired.json` | **New (2026-10-21), NOT registered.** The `*/15 * * * *` cron spec (array-wrapped so `supabase cron add -f` accepts it); its Notes carry the live-application steps. |
+| `package.json` + `package-lock.json` | **New (2026-10-21).** Pins `tailwindcss ^3.4.17` — the major version the CDN served at runtime, so the compiled output matches what the pages used to receive from `cdn.tailwindcss.com`. |
 
 All five pages (`index.html`, `menu.html`, `cashier.html`, `kitchen.html`, `owner.html`) now carry the
 identical favicon block at lines 26–28, immediately after the `assets/app.css` `<link>` — added because
@@ -445,12 +455,26 @@ Four more defects reported from the live page, all in `menu.html` + `assets/app.
   `87121`, `02910`, `51408` — were all voided with `void_order` (`"voided": true` each). `list_active_pending`
   now returns `[]` and `orders` / `order_items` are back to 6 / 6 rows, matching the counts above.
 
-**Start here next → E. Phase 8 — Vercel go-live (parked)** (`tools/inject-config.mjs` writes
-`assets/config.generated.js`; that file and root `vercel.json` are gitignored artifacts). Parked until
-Gate A is fully green — the only item still open is the **manual phone run**, which needs a real phone —
-and a Vercel account/domain exist. Phase-8 prep that does not need a human: Supabase Cron →
-`purge_expired_orders()` (server-side TTL), Tailwind CDN → compiled CSS, and `tools/inject-config.mjs`
-exercised against `SL_SB_URL`/`SL_SB_KEY`/`SL_OWNER_EMAILS`.
+**Start here next  →  E. Phase 8  —  Vercel go-live. PREP DONE (2026-10-21), the phase itself still parked.**
+- **Tailwind CDN  →  compiled CSS  —  DONE.** All five pages now load `assets/tailwind.compiled.css` (12,139 B
+  committed artifact) at line 30, after `assets/app.css`, matching the CDN's runtime injection cascade.
+  `tools/tailwind.config.js` reads `assets/tokens.css` at build time, so `tokens.css` stays single-source.
+  Latent defect found and fixed: `min-height-[48px]` is not a valid v3 class (the plugin prefix is `min-h`),
+  so the KDS 48 px tap targets never applied  —  `kitchen.html` Hold and `owner.html` Void/Up/Down now use
+  `min-h-[48px]` and the rule `.min-h-\[48px\]{min-height:48px}` is emitted. Evidence: 0 console messages on
+  all five pages (the CDN warning is gone), computed styles exact, compiled CSS 200 / 12,139 B, no favicon 404,
+  no CDN request, print rules intact.
+- **Cron artifacts  —  DONE (authored, not applied).** `functions/purge-expired/index.ts` (Edge Function, staff-JWT
+  mint) + `tools/cron/purge-expired.json` (cron spec). Live application deferred: it needs the signed-in dashboard
+  plus human approval of the Edge-Function staff secrets.
+- **`tools/inject-config.mjs` exercised  —  DONE (4/4).** Success exit 0 (`assets/config.generated.js` written, 5 tags
+  injected, `tools/vercel.json` copied); idempotent re-run skipped everything; fail-loud missing `SL_SB_URL` exit 1;
+  fail-loud `sk_`-shaped key exit 1 with 0 leak hits. Artifacts gitignored (`.gitignore:7`, `:20`); tracked pages
+  byte-exact restored, so the injector is net-zero on the tree.
+
+**REMAINING Phase-8 items:** live cron application (the steps are in the Notes of `tools/cron/purge-expired.json`
+ — deploy the Edge Function, set its four secrets, then register the job), a Vercel account/domain, and the **manual
+phone run** of Gate A, which needs a real phone. Nothing was pushed this turn.
 
 Phases 2–5 are strictly ordered; file-count budget per sub-agent dispatch is **1–3 files**;
 backend verified before frontend; modify only the files the task needs.
@@ -514,7 +538,10 @@ backend verified before frontend; modify only the files the task needs.
 ## 7. Git log at handoff
 
 ```
-HEAD  docs(phase-7): record the R10 pass - cart qty between steppers, double-order guard, board sort + viewport, editable claim   <- HEAD, pushed this turn
+HEAD  docs(phase-8): record the Phase 8 prep pass - compiled CSS, cron artifacts, injector exercised   <- this commit
+e91ce3c feat(phase-8): add server-side TTL cron artifacts (Edge Function + cron spec)
+c30b540 feat(phase-8): compile Tailwind CSS and load it on all five pages
+21a55a5 docs(phase-7): record the R10 pass - cart qty between steppers, double-order guard, board sort + viewport, editable claim   <- was HEAD, pushed 2026-10-20
 ce3b24e fix(phase-7): put the cart quantity between the steppers, refuse a double tap, cap the unpaid board
 7916a0d feat(phase-7): make a looked-up claim editable before payment
 6d32b9d docs(phase-5-7): record the R9 full-system test pass - TTL 30 min and the delete_category refusal
@@ -531,6 +558,9 @@ bb58747 docs(phase-7): record the Gate A audit - 4 defects found, 3 fixed
 b62fd2f fix(phase-7): make Pages usable for a first-time visitor
 af1f4de docs: record Phase 7 completion - Gate A met live
 ```
+
+`main` is **3 ahead of `origin/main`** after this pass: the three phase-8 commits above (`c30b540`, `e91ce3c`, and
+this docs commit) are local only  —  nothing was pushed this turn, and a push needs an explicit human request.
 `main == origin/main` after this turn: the human asked for a push, so `a7ab4bd..HEAD` — the TTL move, the
 `delete_category` refusal, the R9 docs, the two R10 code commits and this docs commit — is on the public branch,
 and GitHub Pages serves the R10 tree once its build finishes. Standing rule for future sessions: the agent does
@@ -751,3 +781,57 @@ server-side.
 - **Sales record now includes the human's own claims:** `87823` (₱1,550.00) and my `34865` (₱1,050.00) are paid,
   which is why revenue moved ₱1,165.00 -> ₱3,765.00 over 9 completed orders (avg ₱418.33). The duplicate
   `09031` is gone from `orders` entirely.
+
+---
+
+## 10. Phase 8 prep pass (2026-10-21)
+
+Four prep items that need no human; all verified. The phase itself (Vercel go-live) stays parked.
+
+### 10.1 Tailwind CDN  →  compiled CSS (commit `c30b540`)
+
+| Item | Evidence |
+| --- | --- |
+| Build | `node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m`  →  `assets/tailwind.compiled.css`, **12,139 B committed** (regenerate on any token change). |
+| Single source | `tools/tailwind.config.js` READS `assets/tokens.css` at build time, so `tokens.css` stays the single source of truth for brand colors  —  the compiled CSS carries the resolved hexes, no page re-declares one. |
+| Pages | All five load it at **line 30**, immediately after `assets/app.css`, matching the cascade the CDN produced at runtime (the CDN injected its generated stylesheet after every head link). The `cdn.tailwindcss.com` script and the inline `tailwind.config` block are gone from all five pages. |
+| Latent defect found | `min-height-[48px]` is **not a valid v3 class**  —  the plugin prefix is `min-h`, so the rule never existed and the KDS 48 px tap targets silently never applied. |
+| Fix | `kitchen.html` Hold (`:186`) and `owner.html` Void (`:217`) / Up (`:361`) / Down (`:362`) now use `min-h-[48px]`; the compiled CSS emits `.min-h-\[48px\]{min-height:48px}`. |
+| QA | **0 console messages on all five pages** (the `cdn.tailwindcss.com should not be used in production` warning is gone), computed styles exact (`bg-brand-card/60`  →  `rgba(34,22,16,0.6)`, header `border-b` still wins the cascade), compiled CSS serves **200 / 12,139 B**, no favicon 404, no CDN request, `@media print` rules intact. |
+
+### 10.2 Cron artifacts (commit `e91ce3c`)  —  authored, NOT applied
+
+`functions/purge-expired/index.ts` (dependency-free Deno Edge Function) + `tools/cron/purge-expired.json`
+(`*/15 * * * *`, array-wrapped so `supabase cron add -f` accepts it). The lazy client-side sweep in
+`list_active_pending` / `kitchen_queue` stays unchanged as the self-healing backstop.
+
+**DESIGN DECISION FLAGGED FOR OWNER APPROVAL  —  not yet locked.** The Edge Function mints a REAL staff JWT
+(password grant) rather than using the service-role key, because `sql/03_rls.sql:141` `orders_staff_delete`
+is `TO authenticated` and therefore DENIES a service-role sweep by design  —  the RLS boundary Gate A proved
+cannot be bypassed from the server side. Provisioning `SL_STAFF_EMAIL` / `SL_STAFF_PASSWORD` as Edge-Function
+secrets is a credential decision that needs an explicit human yes, and whether the cron authenticates as a
+dedicated cron staff account or reuses `staff-gate` is a second decision. Secrets live only in Edge-Function
+env; nothing is deployed and nothing is pushed.
+
+### 10.3 Injector exercised (4 runs, no commit  —  artifacts are gitignored)
+
+| Run | Result |
+| --- | --- |
+| Success | exit 0  —  `assets/config.generated.js` written, 5 `<script type="module">` tags injected across the five pages, `tools/vercel.json` copied to the deploy root |
+| Idempotent re-run | everything skipped, exit 0, no duplicate tags |
+| Missing `SL_SB_URL` | fail-loud, exit 1, names only reported (never values) |
+| `sk_`-shaped key | fail-loud, exit 1, **0 leak hits**  —  a service-role-shaped key is refused before anything is written |
+
+Artifacts stay gitignored (`.gitignore:7` `assets/config.generated.js`, `:20` `/vercel.json`) and the tracked
+pages were byte-exact restored afterwards, so the injector is **net-zero on the tree**.
+
+### 10.4 DB drift found during QA
+
+The live DB now renders **14 visible items over 5 categories**: `GM Americano` added inside Coffee and `Coopper`
+in a brand-new `Doggy` category, from human menu edits made after the last handoff. The 12-seed counts in §2 and
+§3 are superseded; the hidden `Test Ristretto R9` item is unchanged.
+
+### 10.5 QA summary
+
+0 console messages ×5 pages, computed styles exact, probes conform, DB drift noted. Nothing pushed: `main` is
+3 ahead of `origin/main` (a push needs an explicit human request).
