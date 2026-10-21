@@ -85,6 +85,15 @@
 --   20, and p95 read 300 (OFFSET FLOOR(3*0.95)=2 over [100,200,300]), so revenue,
 --   aov, avg and p95 math all check out.
 --
+-- NOTE: items_count is CUPS (SUM(order_items.quantity)), never COUNT(1) over
+--   order_items - the cashier board column is headed "No. of Items/Drinks" and a
+--   customer cart counts cups, so a 2-line cart (Americano x2 + Long Black x5)
+--   reports 7, not 2. Four sites fixed in create_order, claim_view, list_active_pending
+--   and confirm_payment; the `lines` local in set_claim_item_qty legitimately still
+--   counts LINES for its LAST_LINE_ONLY guard and is left alone. sales_report is the
+--   CSV-grade sibling of sales_summary (per-sale / per-day / per-month rows behind the
+--   headline numbers, completed 'served' sales only).
+--
 -- DEPENDS ON 07_staff_roster.sql AT CALL TIME: jwt_claims_email()/roster_role_of()
 --   are defined there; plpgsql resolves those calls at runtime, so the apply order
 --   01->02->03->04->05->06->07 must complete before any function here is called.
@@ -162,7 +171,7 @@ BEGIN
     SELECT new_order_id, (e ->> 'menu_item_id')::uuid, e ->> 'item_name', e ->> 'size',
            (e ->> 'unit_price')::numeric, (e ->> 'quantity')::int, (e ->> 'subtotal')::numeric
       FROM jsonb_array_elements(resolved) AS e;
-  RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('code', new_code, 'order_id', new_order_id, 'total', total, 'items_count', jsonb_array_length(resolved)), 'error', NULL);
+  RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('code', new_code, 'order_id', new_order_id, 'total', total, 'items_count', COALESCE((SELECT SUM((e ->> 'quantity')::int) FROM jsonb_array_elements(resolved) AS e), 0)), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
 
@@ -178,6 +187,8 @@ $$ LANGUAGE plpgsql;
 -- item_id is the order_items row id: the only stable handle a page can address a
 -- single line by, since two lines of the same item+size never exist (add_claim_item
 -- merges them) and quantity is a column rather than one row per unit.
+-- items_count is CUPS (SUM of order_items.quantity), not lines: the cashier board
+--   column is headed "No. of Items/Drinks" and a customer cart counts cups.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION claim_view (p_order_id uuid)
 RETURNS jsonb AS $$
@@ -196,7 +207,7 @@ BEGIN
               'status', o.status, 'total_amount', o.total_amount,
               'created_at', o.created_at, 'expires_at', o.expires_at,
               'seconds_remaining', GREATEST(0, EXTRACT(EPOCH FROM (o.expires_at - now()))::int),
-              'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id),
+              'items_count', COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id), 0),
               'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
                     'item_id', oi.id, 'menu_item_id', oi.menu_item_id,
                     'item_name', oi.item_name, 'size', oi.size,
@@ -292,7 +303,7 @@ BEGIN
                 'code', o.code, 'customer_name', o.customer_name,
                 'created_at', o.created_at, 'expires_at', o.expires_at,
                 'seconds_remaining', GREATEST(0, EXTRACT(EPOCH FROM (o.expires_at - now()))::int),
-                'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id),
+                'items_count', COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id), 0),
                 'total_amount', o.total_amount)
                 ORDER BY lower(o.customer_name) ASC, o.created_at DESC)
               FROM orders AS o
@@ -330,7 +341,7 @@ BEGIN
               'code', o.code, 'customer_name', o.customer_name,
               'status', o.status, 'total_amount', o.total_amount,
               'paid_at', o.paid_at,
-              'items_count', (SELECT COUNT(1) FROM order_items AS oi WHERE oi.order_id = o.id))
+              'items_count', COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id)))
            FROM orders AS o
            WHERE o.code = claim_code AND o.status = 'paid' AND o.paid_at = stamp);
 
@@ -643,6 +654,79 @@ BEGIN
                               GROUP BY to_char(o.paid_at, fmt)) AS b),
                       '[]'::jsonb);
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('revenue', rev, 'completed_count', cnt, 'aov', aov, 'grain', grain, 'buckets', buckets), 'error', NULL);
+END;
+$$ LANGUAGE plpgsql;
+
+-- ----------------------------------------------------------------------------
+-- sales_report :: the CSV-grade rows behind sales_summary's headline numbers
+-- (owner dashboard, assets/api.js salesReport). One grain-appropriate table per
+-- export, so each download answers the question the matching tab asks:
+--   daily   -> one row per COMPLETED sale: who, when it was paid, when the
+--              kitchen served it, the turnaround (paid_at -> served_at, which is
+--              exactly the derived fulfillment_time_seconds column), the line
+--              items with quantities, cups and the cash received.
+--   monthly -> one row per DAY inside the window: cups sold and cash received.
+--   yearly  -> one row per MONTH inside the window: cups sold and cash received.
+-- Completed sales ONLY (status 'served'): an abandoned claim left zero trace by
+-- design (TTL DELETE) and a paid-but-never-served order is still open, so
+-- neither belongs in a sales record. 'cups' sums order_items.quantity, matching
+-- items_count above (cups, not lines). Labels are to_char(paid_at, fmt) in the
+-- server's timezone, exactly like sales_summary's buckets, so a page can line a
+-- label up with a window without translating anything.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION sales_report (from_time timestamptz, to_time timestamptz, grain text)
+RETURNS jsonb AS $$
+DECLARE
+  claims jsonb; email text; fmt text;
+  rows jsonb := '[]'::jsonb;
+BEGIN
+  claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
+  email := COALESCE(claims ->> 'email', '');
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'this report needs a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this report needs an active owner on the staff roster')); END IF;
+  IF grain NOT IN ('daily', 'monthly', 'yearly') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_GRAIN', 'message', 'grain must be daily, monthly or yearly')); END IF;
+  -- fmt drives the ELSE branch ONLY, and it is one level FINER than the grain the
+  -- page asked for: 'monthly' rows are days, 'yearly' rows are months. That is what
+  -- the owner's CSV wants (item 9: per-day totals inside a month; item 10: per-month
+  -- totals inside a year). sales_summary keeps its own coarser fmt for the chart.
+  fmt := CASE grain WHEN 'yearly' THEN 'YYYY-MM' ELSE 'YYYY-MM-DD' END;
+  IF grain = 'daily' THEN
+    -- one row per completed sale; the line items ride inside the row as a jsonb
+    -- array so the page can format them however a reader wants (the SQL layer
+    -- never builds display strings - same rule as claim_view carrying items[]).
+    rows := COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                  'code', o.code, 'customer_name', o.customer_name,
+                  'paid_at', o.paid_at, 'served_at', o.served_at,
+                  'turnaround_seconds', o.fulfillment_time_seconds,
+                  'cash_received', o.total_amount,
+                  'cups', COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id), 0),
+                  'items', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                        'item_name', oi.item_name, 'size', oi.size,
+                        'quantity', oi.quantity)
+                      ORDER BY oi.item_name ASC, oi.size ASC)
+                    FROM order_items AS oi WHERE oi.order_id = o.id), '[]'::jsonb))
+                ORDER BY o.paid_at ASC)
+              FROM orders AS o
+              WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), '[]'::jsonb);
+  ELSE
+    -- monthly / yearly: per-day or per-month totals. The inner SELECT resolves
+    -- each order's cups ONCE (a correlated scalar subquery cannot sit in a
+    -- GROUP BY projection, so the per-order work lives one level down and the
+    -- aggregate below only adds whole numbers up).
+    rows := COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                  'label', g.label, 'cups', g.cups, 'cash_received', g.cash, 'orders', g.cnt)
+                ORDER BY g.label ASC)
+              FROM (SELECT s.label AS label, SUM(s.cups) AS cups, SUM(s.cash) AS cash, COUNT(1) AS cnt
+                    FROM (SELECT to_char(o.paid_at, fmt) AS label,
+                          COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id), 0) AS cups,
+                          o.total_amount AS cash
+                          FROM orders AS o
+                          WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time) AS s
+                    GROUP BY s.label) AS g),
+            '[]'::jsonb);
+  END IF;
+  RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('grain', grain, 'rows', rows), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
 -- ----------------------------------------------------------------------------
