@@ -88,7 +88,7 @@
      ====================================================================== -->
 <script type="module">
     import {
-        signIn, setSessionToken, staffSession, salesSummary, turnoverStats, getMenu, getCategories,
+        signIn, setSessionToken, staffSession, salesSummary, salesReport, turnoverStats, getMenu, getCategories,
         createCategory, reorderCategories, deleteCategory, createMenuItem,
         updateMenuItem, uploadImage, listActivePending, voidOrder, fmtPeso, fmtTime, fmtCountdown,
         rosterList, rosterAdd, rosterSuspend, rosterReactivate, rosterMoveStation,
@@ -102,6 +102,17 @@
     let salesErr = null;        // error code from the last sales read
     let salesGrain = 'daily';
     let salesDays = 30;
+    /* --- period focus (items 7/9/10): the Sales tab could only re-RANGE, never
+       pick one day/month/year, so "what day do I want to see?" had no answer.
+       salesFocus holds a label EXACTLY as the server labels buckets ('YYYY-MM-DD'
+       | 'YYYY-MM' | 'YYYY') or null = the whole range. Labels come from
+       to_char(paid_at, fmt), which is the SERVER's timezone (Supabase PG runs UTC),
+       so every bound below is built with Date.UTC and ISO'd the same way — Date(y,
+       m, d) local would shift the window by the browser's offset and silently
+       drop the period's first hours. salesWindow remembers the from/to/grain that
+       was ACTUALLY read, so Export CSV exports exactly what the chart shows. */
+    let salesFocus = null;
+    let salesWindow = null;
     let turn = null;            // last turnoverStats payload
     let turnErr = null;
     let turnDays = 30;
@@ -259,6 +270,8 @@
                 <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="7">7 days</button>
                 <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="30">30 days</button>
                 <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="365">365 days</button>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Focus</span>
+                ${focusSelect()}
               </div>`;
         if (!sales) {
             const note = salesErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(salesErr)}</p>` : '';
@@ -276,6 +289,7 @@
                 <span class="font-mono text-brand-cream ml-4">${fmtPeso(sales.aov)}</span>
                 <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Avg / order</span>
               </div>
+              <p class="text-brand-muted text-xs mt-2">Window ${String(salesWindow.from).slice(0, 10)} → ${String(salesWindow.to).slice(0, 10)} · ${salesWindow.grain} bars · ${salesFocus ? `focused on ${esc(String(salesFocus))}` : 'the whole range'}</p>
               <div class="mt-4">${renderBars(buckets)}</div>
               ${exportBtn}
             </div>${renderClaims()}`;
@@ -498,8 +512,62 @@
     }
 
     /* --- reads ----------------------------------------------------------- */
+    /* --- window: whole range, or one focused period ------------------------
+       Focusing narrows the window AND drops the grain one step, so the bars show
+       the breakdown INSIDE what was picked: pick a day -> that day, pick a month
+       -> its days, pick a year -> its months. The headline numbers then answer
+       for the picked period alone, which is what the owner asked for. */
+    function focusWindow(grain, focus) {
+        if (!focus) return { from: daysBackISO(salesDays), to: new Date().toISOString(), grain: grain };
+        const f = String(focus);
+        const y = Number(f.slice(0, 4));
+        const mo = f.length >= 7 ? Number(f.slice(5, 7)) : 1;
+        const d = f.length >= 10 ? Number(f.slice(8, 10)) : 1;
+        const start = (grain === 'daily') ? Date.UTC(y, mo - 1, d)
+            : (grain === 'monthly' ? Date.UTC(y, mo - 1, 1) : Date.UTC(y, 0, 1));
+        const end = (grain === 'daily') ? start + 86400000
+            : (grain === 'monthly' ? Date.UTC(y, mo, 1) : Date.UTC(y + 1, 0, 1));
+        const finer = (grain === 'yearly') ? 'monthly' : 'daily';
+        return { from: new Date(start).toISOString(), to: new Date(end - 1000).toISOString(), grain: finer };
+    }
+    /* Labels offered in the dropdown are generated from the calendar in UTC, never
+       from the buckets on screen — a bucket that happens to be empty must still be
+       selectable (it answers with nothing, which is honest), and re-deriving the
+       options from a finer-grain repaint would make the list jump around. */
+    function focusLabels() {
+        const now = Date.now();
+        if (salesGrain === 'daily') {
+            const n = Math.min(salesDays, 31);
+            const out = [];
+            for (let i = n - 1; i >= 0; i--) {
+                const d = new Date(now - i * 86400000);
+                out.push(`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`);
+            }
+            return out;
+        }
+        if (salesGrain === 'monthly') {
+            const out = [];
+            const s = new Date(now - salesDays * 86400000), e = new Date(now);
+            let y = s.getUTCFullYear(), m = s.getUTCMonth();
+            while (out.length < 25 && (y < e.getUTCFullYear() || (y === e.getUTCFullYear() && m <= e.getUTCMonth()))) {
+                out.push(`${y}-${pad(m + 1)}`);
+                m++; if (m > 11) { m = 0; y++; }
+            }
+            return out;
+        }
+        const out = [];
+        const sy = new Date(now - salesDays * 86400000).getUTCFullYear();
+        for (let yy = sy; yy <= new Date(now).getUTCFullYear(); yy++) out.push(String(yy));
+        return out;
+    }
+    function focusSelect() {
+        const opts = focusLabels().map((l) => `<option value="${esc(l)}" data-focus-label="${esc(l)}">${esc(l)}</option>`).join('');
+        const word = (salesGrain === 'daily') ? 'days' : (salesGrain === 'monthly' ? 'months' : 'years');
+        return `<select data-sales-focus class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border"><option value="" data-focus-label="">All ${word}</option>${opts}</select>`;
+    }
     async function loadSales() {
-        const res = await salesSummary(daysBackISO(salesDays), new Date().toISOString(), salesGrain);
+        salesWindow = focusWindow(salesGrain, salesFocus);
+        const res = await salesSummary(salesWindow.from, salesWindow.to, salesWindow.grain);
         if (!res.success) { salesErr = res.error?.code ?? 'HTTP'; sales = null; return; }
         salesErr = null;
         sales = res.data || {};
@@ -539,19 +607,61 @@
 
     function say(msg) { toast = { msg, until: Date.now() + 6000 }; }
 
-    /* --- CSV export: built client-side from the buckets already in hand -- */
+    /* --- CSV export: the ROWS behind what is on screen, not the headline -----
+       sales_report (sql/02_functions.sql) answers the SAME window the tab just
+       read, so a download always matches the chart. One grain-appropriate table
+       per export, which is what each tab asks:
+         daily   -> one row per completed sale: who, when the cashier took the
+                     payment, when the kitchen served it, the turnaround between
+                     those two (paid_at -> served_at), the cups, the line items
+                     with quantities, and the cash received.
+         monthly -> one row per DAY inside the month: cups and cash.
+         yearly  -> one row per MONTH inside the year: cups and cash.
+       Completed sales only — an abandoned claim left zero trace by design (TTL
+       DELETE) and a paid-but-never-served order is still open. The SQL layer
+       never builds display strings, so the item text is joined HERE. */
     function csvField(v) {
         const s = String(v ?? '');
         return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     }
+    function itemsField(items) {
+        return (items || []).map((it) =>
+            `${Number(it.quantity ?? 0)}x ${String(it.item_name ?? '')} (${String(it.size ?? '')})`).join(' + ');
+    }
+    /* The CSV does not follow the CHART grain, it follows the grain the owner
+       SELECTED (salesGrain, which is also the level of whatever Focus label is
+       picked). sales_report answers one level finer than the grain it is handed,
+       so: daily -> one row per sale (name, items with qty, cash, turnaround);
+       monthly -> one row per DAY inside the window (cups + cash per day);
+       yearly  -> one row per MONTH inside the window. Focusing a month therefore
+       exports that month day-by-day even though the bars drill down to days —
+       the chart shows the shape, the file gives the totals the owner asked for. */
     async function exportCsv() {
-        if (!sales) return;
-        const lines = ['label,revenue,count'];
-        (sales.buckets || []).forEach((b) => lines.push(`${csvField(b.label)},${Number(b.revenue ?? 0)},${Number(b.count ?? 0)}`));
+        if (!salesWindow) { say('Nothing has been read to export yet.'); return paint(); }
+        const rep = await salesReport(salesWindow.from, salesWindow.to, salesGrain);
+        if (!rep.success) { say(copyFor(rep.error?.code ?? 'HTTP')); return paint(); }
+        const d = rep.data || {};
+        const rows = d.rows || [];
+        if (!rows.length) { say('That window has no completed sales to export.'); return paint(); }
+        const grain = String(d.grain ?? salesWindow.grain);
+        const lines = [];
+        if (grain === 'daily') {
+            lines.push('code,customer_name,paid_at,served_at,turnaround_hhmm,turnaround_seconds,cups,items,cash_received');
+            rows.forEach((r) => lines.push([
+                String(r.code ?? ''), String(r.customer_name ?? ''), String(r.paid_at ?? ''), String(r.served_at ?? ''),
+                fmtMMSS(r.turnaround_seconds), String(Number(r.turnaround_seconds ?? 0)),
+                String(Number(r.cups ?? 0)), itemsField(r.items), String(Number(r.cash_received ?? 0)),
+            ].map(csvField).join(',')));
+        } else {
+            lines.push(grain === 'monthly' ? 'day,cups,cash_received,orders' : 'month,cups,cash_received,orders');
+            rows.forEach((r) => lines.push([
+                String(r.label ?? ''), String(Number(r.cups ?? 0)), String(Number(r.cash_received ?? 0)), String(Number(r.orders ?? 0)),
+            ].map(csvField).join(',')));
+        }
         const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `sales-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.download = `sleepless-sales-${grain}-${salesFocus ? String(salesFocus) : new Date().toISOString().slice(0, 10)}.csv`;
         a.click();
         setTimeout(() => URL.revokeObjectURL(a.href), 2000);
         say('CSV saved to your downloads.');
@@ -791,8 +901,20 @@
         const t = e.target;
         if (armed && Date.now() >= armed.until) armed = null;   // stale arm never fires
         if (t.dataset.tab !== undefined) { tab = t.dataset.tab; paint(); }
-        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
-        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        /* A grain change or a re-range invalidates a focus label (the labels
+           belong to a grain and a window), so focus resets — silently and
+           without a stale filter quietly still narrowing the next read. */
+        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; salesFocus = null; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); salesFocus = null; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.focusLabel !== undefined) { salesFocus = t.dataset.focusLabel || null; void (async () => { await loadSales(); paint(); })(); }
+        else if (t.dataset.salesFocus !== undefined) {
+            /* tapping the select box itself rather than an option: read the
+               currently selected option, same helper the menu tabs use. */
+            const sel = document.querySelector('[data-sales-focus]');
+            const opt = sel ? selectedOption(sel) : null;
+            salesFocus = opt ? (opt.dataset.focusLabel ?? null) : null;
+            void (async () => { await loadSales(); paint(); })();
+        }
         else if (t.dataset.export !== undefined) void exportCsv();
         else if (t.dataset.turnDays !== undefined) { turnDays = Number(t.dataset.turnDays); void (async () => { await loadTurnover(); paint(); })(); }
         else if (t.dataset.addItem !== undefined) void addItem();

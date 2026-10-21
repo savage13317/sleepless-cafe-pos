@@ -42,7 +42,7 @@
                 <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">SLEEPLESS CAFE</h1>
             </div>
             <p class="text-brand-muted text-xs mt-1">
-                Staff door · sign in to reach your station
+                Staff door · type your email and password, then tap Sign in
             </p>
         </div>
     </header>
@@ -108,28 +108,32 @@
     /* --- result card: a single human line, no board, no stack. ------------- */
     function renderCard(copy) {
         document.getElementById('app').innerHTML =
-            `<div class="bg-brand-card border border-brand-border/60 rounded-xl p-6 my-6 mx-auto max-w-md">
+            `<div class="glass-card rounded-xl p-6 my-6 mx-auto max-w-md flex flex-col gap-3">
                <p class="text-brand-accentLight text-sm font-semibold">${esc(copy)}</p>
                <p class="text-brand-muted text-xs mt-2">Nothing opens until a staff session exists — orders are invisible to anonymous visitors.</p>
              </div>`;
     }
 
-    /* --- the form card: two labeled inputs + one big tap target. ----------- */
+    /* --- the form card: two labeled inputs + one big tap target. -----------
+       FIX: the inputs are VOID elements, so the old card wrote `</div>` after
+       each <input>, which closed the CARD on the first input and left the
+       password field and the Sign in button spilling outside it at full page
+       width. One card, one flex column, nothing self-closing inside it. */
     function openForm() {
         const app = document.getElementById('app');
         app.innerHTML =
-            `<div class="bg-brand-card border border-brand-border/60 rounded-xl p-6 my-6 mx-auto max-w-md">
-               <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Staff sign-in</p>
+            `<div class="glass-card rounded-xl p-6 my-6 mx-auto max-w-md flex flex-col gap-3">
+               <p class="text-brand-accent text-xs uppercase tracking-wider mb-1">Staff sign-in</p>
                <label class="text-brand-muted text-xs uppercase tracking-wider">Email</label>
                <input type="text" placeholder="you@cafe.example" spellcheck="false" autocomplete="off"
-                      class="rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
-                      data-email-input></div>
-               <label class="text-brand-muted text-xs uppercase tracking-wider">Password</label>
+                      class="rounded-lg p-3 py-2 min-h-[48px] text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content"
+                      data-email-input>
+               <label class="text-brand-muted text-xs uppercase tracking-wider mt-2">Password</label>
                <input type="text" placeholder="password" spellcheck="false" autocomplete="off"
-                      class="rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
-                      data-pass-input></div>
-               <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-4" data-signin>Sign in</button>
-               <p class="text-brand-muted text-xs mt-4">You'll land on your station:
+                      class="rounded-lg p-3 py-2 min-h-[48px] text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content"
+                      data-pass-input>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-3 w-full" data-signin>Sign in</button>
+               <p class="text-brand-muted text-xs mt-3">You'll land on your station:
                    <span class="text-brand-cream"><i class="fa-solid fa-cash-register text-brand-accent mr-1"></i>Cashier</span> ·
                    <span class="text-brand-cream"><i class="fa-solid fa-utensils text-brand-accent mr-1"></i>Kitchen</span> ·
                    <span class="text-brand-cream"><i class="fa-solid fa-user text-brand-accent mr-1"></i>Owner</span>

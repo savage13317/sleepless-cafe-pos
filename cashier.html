@@ -100,7 +100,7 @@
 </script>
 
 <script type="module">
-    import { signIn, setSessionToken, getOrderByCode, listActivePending, confirmPayment, getMenu,
+    import { signIn, setSessionToken, clearSessionToken, staffSession, getOrderByCode, listActivePending, confirmPayment, getMenu,
             getClaimView, setClaimItemQty, addClaimItem, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
 
     /* --- state ----------------------------------------------------------- */
@@ -109,6 +109,10 @@
     let toast = null;           // {msg, until} — transient success line
     let boardError = null;      // error code from the last board poll
     let staffEmail = null;      // email of the signed-in staff session
+    let staffName = null;       // roster display_name of that session — what the board shows
+    let lastTap = Date.now();   // last interaction; IDLE_MS of none = auto sign-out
+    let signedOut = false;      // logged out (manually or by idle): board stays closed
+    const IDLE_MS = 3 * 60 * 60 * 1000;   // three hours, the owner's rule
     let menu = [];              // available catalogue, for the Add-to-claim panel
     /* One claim is edited at a time. A double tap on + or Remove would otherwise
        fire two edits, and the second would be applied to a line the first edit
@@ -131,6 +135,12 @@
     const BAD_SHAPE = "That's not a 5-digit code.";
     const NOT_FOUND = "Wrong code, or that order's time is up.";
     const PAID_COPY = "Paid — sent to the kitchen.";
+    /* --- identity + logout copy (owner complaint: no name, no log-out) ----- */
+    const WHO_COPY = (name) => `Signed in as ${name} — tap Log out to close the register.`;
+    const LOGGED_OUT_COPY = "Signed out. The register is closed — sign in again from the staff door.";
+    const IDLE_COPY = "Three hours with no taps at this register, so you were signed out. Sign in again from the staff door.";
+    const NOT_ON_ROSTER = "This email is signed in but not on the staff roster — the register stays closed.";
+    const NOT_CASHIER = "This staff member doesn't stand at the register — the cashier board stays closed.";
     const ERR_COPY = {
         ORDER_EXPIRED: "This order's time is up, please place a new one",
         NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
@@ -152,6 +162,21 @@
     }
     tick();
     setInterval(tick, 1000);
+
+    /* --- sign out: bearer gone, saved credentials gone, board closed ------
+       clearSessionToken() drops the bearer realtime/api calls use; removing
+       sl_auth is what makes the sign-out SURVIVE a refresh — otherwise a reload
+       would boot straight back in from localStorage and the cashier would never
+       actually be out. login.html is the only place credentials get typed again. */
+    function signOut(copy) {
+        signedOut = true;
+        clearSessionToken();
+        try { localStorage.removeItem('sl_auth'); } catch { /* private mode */ }
+        staffEmail = null;
+        staffName = null;
+        document.getElementById('staffid').textContent = 'nobody';
+        renderAuthGate(copy);
+    }
 
     /* --- auth gate card (no session = no board) -------------------------- */
     function renderAuthGate(copy) {
@@ -183,6 +208,14 @@
               </tr>`;
     }
 
+    /* the register shows WHO is standing at it, so a shared terminal can never
+       be edited by the wrong pair of hands — display_name from sql/07, never
+       the email, never the credential. */
+    function whoLine() {
+        if (!staffName) return '';
+        return `<p class="text-brand-accentLight text-xs mt-2">${esc(WHO_COPY(staffName))}</p>`;
+    }
+
     function renderBoard() {
         const head = `<tr class="bg-brand-card/60 text-brand-muted text-xs uppercase tracking-wider py-2">
                 <th class="px-3 text-left">Code</th>
@@ -212,14 +245,15 @@
                 </div>
                 ${scrollNote}
                 ${note}
+                ${whoLine()}
               </div>`;
     }
 
     /* --- lookup views ---------------------------------------------------- */
     /* THE CLAIM CARD IS THE CUSTOMER CART, re-dressed for the counter: it uses
        the same .cart-line grid from assets/app.css, so a cashier reads a claim
-       exactly the way a customer read their own order - name, amount, +,
-       quantity, −, Remove. Two identities make the edits possible: the card
+       exactly the way a customer read their own order - name, amount, −,
+       quantity, +, Remove. Two identities make the edits possible: the card
        carries order_id and each line carries the order_items row id, which is
        the only stable handle for addressing ONE line (item_name + size is not,
        since a claim can hold the same item twice under different sizes).
@@ -231,9 +265,9 @@
                     data-claim-line data-claim-item="${esc(r.item_id)}" data-claim-qty="${esc(r.quantity ?? 0)}">
                     <span class="text-brand-cream text-sm">${esc(r.item_name ?? '')} · ${esc(r.size ?? '')}</span>
                     <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(r.subtotal)}</span>
-                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="1">+</button>
-                    <span class="cart-qty text-brand-cream font-mono text-sm">${Number(r.quantity ?? 0)}</span>
                     <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="-1">−</button>
+                    <span class="cart-qty text-brand-cream font-mono text-sm">${Number(r.quantity ?? 0)}</span>
+                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="1">+</button>
                     <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-claim-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
                   </div>`;
     }
@@ -282,7 +316,7 @@
                   <span class="font-mono text-brand-accentLight">${fmtPeso(l.total_amount)}</span>
                 </div>
                 ${note}
-                <p class="text-brand-accent text-xs uppercase tracking-wider mt-4">On this claim · tap + or − beside the number, Remove to drop a line</p>
+                <p class="text-brand-accent text-xs uppercase tracking-wider mt-4">On this claim · tap − or + beside the number, Remove to drop a line</p>
                 ${lines}
                 ${renderAddPanel()}
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-confirm>Confirm Payment</button>
@@ -418,6 +452,15 @@
     /* --- event wiring (delegated, so repainting cards keeps handlers) ---- */
     document.addEventListener('click', (e) => {
         const t = e.target;
+        /* any tap at the register counts as being there, which is what resets
+           the idle clock — the board polling itself must never do that, or a
+           cashier asleep in front of a live board would never be signed out. */
+        lastTap = Date.now();
+        if (t.dataset.logout !== undefined) {
+            if (signedOut) return;
+            void signOut(LOGGED_OUT_COPY);
+            return;
+        }
         if (t.dataset.confirm !== undefined) {
             const card = t.closest('[data-order-card]');
             if (card) void pay(card.dataset.code);
@@ -464,7 +507,8 @@
                <input type="text" placeholder="5-digit code" spellcheck="false" autocomplete="off"
                       class="font-mono text-3xl tracking-widest rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
                       data-code-input></div>
-               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-lookup>Look Up</button>`;
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-lookup>Look Up</button>
+               <button class="rounded-lg px-3 py-2 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap mt-2" data-logout>Log out</button>`;
         const input = host.querySelector('[data-code-input]');
         /* `change` on a bare input only fires on commit, so the Look Up button
            is the reliable path; the listener stays as a convenience. */
@@ -494,6 +538,26 @@
         /* only the email is surfaced — the password is never rendered */
         document.getElementById('staffid').textContent = staffEmail;
 
+        /* WHO stands at the register: staff_session() reads the caller's claims
+           against sql/07 staff_roster and refreshes last_seen_at server-side, so
+           the roster's "seen" column and this board agree. The DISPLAY NAME is
+           what the cashier needs to see (an email is not a name), and the role
+           decides whether this board is even open — a kitchen cook must not run
+           the register. */
+        const ss = await staffSession();
+        if (!ss.success) {
+            const code = ss.error?.code;
+            renderAuthGate(code === 'STAFF_NOT_REGISTERED' ? NOT_ON_ROSTER
+                : code === 'WRONG_STATION' ? NOT_CASHIER
+                : code === 'NETWORK' ? ERR_COPY.NETWORK : ERR_COPY.HTTP);
+            return;
+        }
+        const me = ss.data || {};
+        staffName = String(me.display_name ?? '') || staffEmail;
+        document.getElementById('staffid').textContent = staffName;
+        if (String(me.role ?? '') !== 'cashier') { renderAuthGate(NOT_CASHIER); return; }
+        lastTap = Date.now();
+
         openCodeInput();
         /* The Add-to-claim panel needs the catalogue. menu_items carry a public
            READ policy (sql/03_rls.sql), so this read can never fail the board -
@@ -502,7 +566,17 @@
         if (cat.success) menu = (cat.data || []).filter((m) => m.is_available === true);
         await refreshBoard();
         paint();
-        setInterval(async () => { await refreshBoard(); paint(); }, 5000);
+        /* the register's own heartbeat: refresh the board every 5 s, and on
+           every beat ask whether three hours have passed with no tap at all.
+           Idle is measured from the LAST TAP, never from the poll, so a cashier
+           mid-service (tapping codes, editing claims) is never signed out, and
+           one who walked off after their shift is. */
+        setInterval(async () => {
+            if (signedOut) return;
+            if (Date.now() - lastTap >= IDLE_MS) { void signOut(IDLE_COPY); return; }
+            await refreshBoard();
+            paint();
+        }, 5000);
     })();
     </script>
 </body>

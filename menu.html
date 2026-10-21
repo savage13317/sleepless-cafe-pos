@@ -216,16 +216,16 @@
                     data-cart-line data-cart-id="${esc(r.itemId)}" data-cart-size="${esc(r.size)}">
                 <span class="text-brand-cream text-sm">${esc(item?.name ?? 'Item')} · ${esc(r.size)}</span>
                 <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(price * r.qty)}</span>
-                <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="1">+</button>
-                <span class="cart-qty text-brand-cream font-mono text-sm">${r.qty}</span>
                 <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="-1">−</button>
+                <span class="cart-qty text-brand-cream font-mono text-sm">${r.qty}</span>
+                <button class="cart-btn rounded-lg text-sm font-bold" data-cart-qty="1">+</button>
                 <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-cart-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
               </div>`;
         }).join('');
         return `<div class="glass-card rounded-xl p-4 mt-4">
             <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Your cart · ${count} item${count === 1 ? '' : 's'}</p>
             ${lines}
-            <p class="text-brand-muted text-xs mt-1">The number between + and − is how many you have. Tap + or − to change it, Remove to drop the line.</p>
+            <p class="text-brand-muted text-xs mt-1">The number between − and + is how many you have. Tap − or + to change it, Remove to drop the line.</p>
             <p class="text-brand-accentLight font-mono text-sm mt-2">Total ${fmtPeso(total)}</p>
             <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-checkout>Proceed to Checkout</button>
           </div>`;

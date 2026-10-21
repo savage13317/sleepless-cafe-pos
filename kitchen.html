@@ -92,7 +92,7 @@
 </script>
 
 <script type="module">
-    import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
+    import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtTime, fmtCountdown } from './assets/api.js';
     /* `mode` is a live binding: reading it inside a function sees realtime.js'
        later updates, so the header dot follows a socket that dies mid-service. */
     import { startWatching, stopWatching, mode as realtimeMode } from './assets/realtime.js';
@@ -167,18 +167,22 @@
         const code = String(r.code ?? '');
         const secs = elapsedSeconds(r.paid_at);
         const holding = String(r.status ?? '') === 'preparing';
+        /* amounts are deliberately ABSENT from the KDS card: a cook never
+           prices anything — the cashier owns pricing, the kitchen owns make-time.
+           What the expo actually needs is the order SIZE and the per-line QTY, so
+           the card carries the customer name, a cups total, and a big per-line
+           count; removing the peso removes the mis-read the old unit-price line
+           existed to prevent. kitchen_queue() carries items[] with quantity per
+           line and no cups total, so the cups total is summed client-side from the
+           RAW r.items (not the rendered HTML). */
+        const cups = (r.items || []).reduce((n, it) => n + Number(it.quantity ?? 1), 0);
         const items = (r.items || []).map((it) => {
             const qty = Number(it.quantity ?? 1);
             const size = String(it.size ?? '');
-            /* the KDS card shows the UNIT price, not the line subtotal: a cook
-               calling the expo needs "2 x large at ₱120", and the subtotal
-               invites a mental multiplication error under pressure. kitchen_queue()
-               carries both fields, so this is a choice, not a data gap. */
             return `<li class="text-brand-cream text-sm py-1">
-                      <span class="font-mono text-brand-accentLight mr-2">${qty}×</span>
-                      <span class="whitespace-nowrap">${esc(it.item_name ?? '')}</span>
+                      <span class="font-mono text-brand-accentLight text-2xl mr-2">${qty}×</span>
+                      <span class="text-lg whitespace-nowrap">${esc(it.item_name ?? '')}</span>
                       ${size ? `<span class="text-brand-muted ml-1 text-xs uppercase tracking-wider">${esc(size)}</span>` : ''}
-                      <span class="font-mono text-brand-accentLight ml-2 whitespace-nowrap">${fmtPeso(it.unit_price)}</span>
                     </li>`;
         }).join('');
         const holdBtn = holding
@@ -186,8 +190,9 @@
             : `<button class="rounded-lg whitespace-nowrap text-xs min-h-[48px] px-3 py-2 mt-2 bg-brand-card/60 border border-brand-border text-brand-cream" data-hold>Hold</button>`;
         return `<div class="glass-card rounded-xl p-5 my-4" data-order-card data-order-id="${esc(r.order_id ?? '')}" data-code="${esc(code)}">
                 <div class="flex items-baseline space-between flex-wrap">
-                  <p class="text-brand-cream text-lg font-serif whitespace-nowrap">${esc(r.customer_name ?? '')}</p>
-                  <div class="font-mono text-brand-accentLight tracking-widest" style="letter-spacing:0.3em">${esc(code)}</div>
+                  <p class="text-brand-cream text-2xl font-serif whitespace-nowrap">${esc(r.customer_name ?? '')}</p>
+                  <span class="font-mono text-brand-accentLight text-2xl whitespace-nowrap">${cups} cups</span>
+                  <div class="font-mono text-brand-accentLight text-xs tracking-widest" style="letter-spacing:0.3em">${esc(code)}</div>
                 </div>
                 <div class="flex items-center gap-3 mt-2 flex-wrap">
                   <span class="text-brand-muted text-xs uppercase tracking-wider">Paid ${fmtTime(r.paid_at)}</span>
