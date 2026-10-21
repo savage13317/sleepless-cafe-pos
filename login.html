@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Staff surface: unlisted AND unindexed (Gate B). No other POS page links
+         here, and nothing here links to menu. This door only proves a session and
+         hands the staff member off to their station; it never renders orders. -->
+    <meta name="robots" content="noindex">
+    <title>Sleepless Cafe | Staff Sign-in</title>
+
+    <!-- Tailwind utilities: compiled CSS (Phase B build; loads below, after app.css, to match the CDN's runtime injection order) -->
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above app.css below, because app.css consumes the :root custom
+         properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Favicon: with no icon declared, every page load requests /favicon.ico and
+         GitHub Pages answers 404 — a dead request on every visit. SVG only, self-contained. -->
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+
+    <!-- Tailwind utilities, compiled at build time from tools/tailwind.config.js, which READS assets/tokens.css — tokens.css stays the single source of truth; regenerate the artifact (node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m) whenever a token changes. Loaded HERE (after tokens.css + app.css) because the CDN injected its generated stylesheet at runtime, after every head link — same cascade. -->
+    <link rel="stylesheet" href="assets/tailwind.compiled.css">
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: mug mark + SLEEPLESS CAFE wordmark. No clock here —
+         this door never reads the board, it only signs in and hands off. -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-mug-hot text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">SLEEPLESS CAFE</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Staff door · sign in to reach your station
+            </p>
+        </div>
+    </header>
+
+    <!-- The form / result card lives here; the module repaints it. -->
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i>
+            Sleepless Cafe · Staff door · signed in as <span id="staffid" class="font-mono text-brand-cream">nobody</span>
+        </p>
+    </footer>
+
+    <!-- ============================ CONFIG BOOTSTRAP (classic) ===================
+         Classic (non-module) on purpose: a page's module body runs AFTER its
+         imported modules, so a bootstrap inside the module body would execute
+         after config.js already resolved CONFIG from localStorage. Values are
+         never printed or echoed.                                                    -->
+<script>
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= once -------
+       Classic (non-module) on purpose: must run before config.js is evaluated.
+       Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        if (!url && !key) return;
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
+<!-- ============================== STAFF SIGN-IN (ES module) ===================
+     Imports only the three session primitives from './assets/api.js' (folder
+     prefix required — this page sits at repo root); api.js imports config.js
+     itself, so config.js is not imported here. Credentials are TYPED IN THE PAGE,
+     never read from the URL — the ?email=&password= URL hack that the station
+     pages used is gone here. The password is never rendered, logged, or echoed;
+     only the signed-in email is shown. This door is role-agnostic: it proves a
+     session, then hands the staff member to cashier / kitchen / owner.
+     ====================================================================== -->
+<script type="module">
+    import { signIn, setSessionToken, staffSession } from './assets/api.js';
+
+    /* --- copy: one human line per outcome, never a stack trace, never a code.
+         Distinct strings so a reader can tell which step failed. */
+    const AUTH_COPY = "Those credentials were not accepted.";
+    const NET_COPY = "We can't reach the cafe right now. Check your connection and try again.";
+    const NOT_ON_ROSTER = "This email is not on the staff roster — ask the owner to register you.";
+    /* login is role-agnostic, so these two cannot fire from staff_session() here;
+       the copy stays honest in case the envelope ever carries them. */
+    const SESSION_COPY = "The session could not be established — sign in again.";
+    const STATION_COPY = "Your station will open once you sign in — this door is role-agnostic.";
+    const UNKNOWN_COPY = "Your role isn't a station this door knows — sign in again.";
+    const NEED_BOTH = "Type your email and password, then tap Sign in.";
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- result card: a single human line, no board, no stack. ------------- */
+    function renderCard(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="bg-brand-card border border-brand-border/60 rounded-xl p-6 my-6 mx-auto max-w-md">
+               <p class="text-brand-accentLight text-sm font-semibold">${esc(copy)}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing opens until a staff session exists — orders are invisible to anonymous visitors.</p>
+             </div>`;
+    }
+
+    /* --- the form card: two labeled inputs + one big tap target. ----------- */
+    function openForm() {
+        const app = document.getElementById('app');
+        app.innerHTML =
+            `<div class="bg-brand-card border border-brand-border/60 rounded-xl p-6 my-6 mx-auto max-w-md">
+               <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Staff sign-in</p>
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Email</label>
+               <input type="text" placeholder="you@cafe.example" spellcheck="false" autocomplete="off"
+                      class="rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
+                      data-email-input></div>
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Password</label>
+               <input type="text" placeholder="password" spellcheck="false" autocomplete="off"
+                      class="rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content"
+                      data-pass-input></div>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-4" data-signin>Sign in</button>
+               <p class="text-brand-muted text-xs mt-4">You'll land on your station:
+                   <span class="text-brand-cream"><i class="fa-solid fa-cash-register text-brand-accent mr-1"></i>Cashier</span> ·
+                   <span class="text-brand-cream"><i class="fa-solid fa-utensils text-brand-accent mr-1"></i>Kitchen</span> ·
+                   <span class="text-brand-cream"><i class="fa-solid fa-user text-brand-accent mr-1"></i>Owner</span>
+               </p>
+             </div>`;
+    }
+
+    /* --- one session attempt, shared by the boot path and the form submit.
+         Returns {ok:true} only when it navigated away (the page is replaced).
+         On failure it returns the human copy to show. Never touches the URL. */
+    async function attemptSession(email, password) {
+        const res = await signIn(email, password);
+        if (!res.success) {
+            return { ok: false, copy: res.error?.code === 'NETWORK' ? NET_COPY : AUTH_COPY };
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+
+        const ss = await staffSession();
+        if (!ss.success) {
+            const code = ss.error?.code;
+            const copy = code === 'STAFF_NOT_REGISTERED' ? NOT_ON_ROSTER
+                : code === 'STAFF_SESSION_REQUIRED' ? SESSION_COPY
+                : code === 'WRONG_STATION' ? STATION_COPY
+                : NET_COPY;
+            return { ok: false, copy };
+        }
+
+        const role = (ss.data || {}).role;
+        const target = role === 'cashier' ? 'cashier.html'
+            : role === 'kitchen' ? 'kitchen.html'
+            : role === 'owner' ? 'owner.html' : null;
+        if (!target) return { ok: false, copy: UNKNOWN_COPY };
+
+        /* Persist the pair so the station page can boot itself from sl_auth;
+           login.html only proves the session and hands over the station. The
+           station pages read sl_auth themselves (cashier :480), so they need no
+           URL params — the relative document URL below carries nothing. Same
+           private-mode guard as cashier :492. */
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        /* only the email is surfaced — the password is never rendered */
+        document.getElementById('staffid').textContent = email;
+        /* relative document URL, NO query params — the URL hack is gone. */
+        window.location.replace(target);
+        return { ok: true };
+    }
+
+    /* --- form submit: read the typed values, attempt, repaint on failure. -- */
+    async function submitSignIn(email, password) {
+        if (!email || !password) { renderCard(NEED_BOTH); return; }
+        const r = await attemptSession(email, password);
+        if (!r.ok) renderCard(r.copy);
+    }
+
+    /* --- delegated click wiring (repainting the card keeps the handler) --- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.dataset.signin !== undefined) {
+            const emailInput = document.querySelector('[data-email-input]');
+            const passInput = document.querySelector('[data-pass-input]');
+            void submitSignIn(emailInput ? emailInput.value : '', passInput ? passInput.value : '');
+        }
+    });
+
+    /* --- boot: saved credentials FIRST (bookmark convenience), else the form.
+         If sl_auth exists, try the session before showing anything: opening
+         login.html lands the staff at their station. On AUTH / STAFF_NOT_REGISTERED
+         fall through to the form so credentials can be re-typed. Credentials are
+         NEVER read from the URL here — only from sl_auth or the typed inputs. */
+    (async function () {
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+        if (saved && saved.email && saved.password) {
+            const r = await attemptSession(saved.email, saved.password);
+            if (r.ok) return; /* already navigated to the station */
+            /* fall through to the form on AUTH / STAFF_NOT_REGISTERED */
+        }
+        openForm();
+    })();
+</script>
+</body>
+</html>

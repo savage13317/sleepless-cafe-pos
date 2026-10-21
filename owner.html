@@ -78,22 +78,26 @@
 
     <!-- ========================== OWNER APP (ES module) ====================
      Imports from './assets/api.js' AND './assets/config.js' — unlike cashier/kitchen, this
-     page needs CONFIG itself, because the owner gate reads CONFIG.ownerEmails
-     client-side. The SQL layer double-gates every owner RPC with
+     page needs CONFIG itself, because the legacy ?owneremails= bootstrap still writes
+     sl_config.ownerEmails client-side. That allowlist is SUPERSEDED: login.html is the
+     staff door and sql/07_staff_roster.sql (staff_session + roster_role_of) decides
+     role — see the boot gate. The SQL layer double-gates every owner RPC with
      OWNER_SESSION_REQUIRED (sql/02_functions.sql), so this client check is a
      courtesy, not the security boundary. JSON envelopes never throw; every
      error code maps to one human line, never a stack trace.
      ====================================================================== -->
 <script type="module">
     import {
-        signIn, setSessionToken, salesSummary, turnoverStats, getMenu, getCategories,
+        signIn, setSessionToken, staffSession, salesSummary, turnoverStats, getMenu, getCategories,
         createCategory, reorderCategories, deleteCategory, createMenuItem,
         updateMenuItem, uploadImage, listActivePending, voidOrder, fmtPeso, fmtTime, fmtCountdown,
+        rosterList, rosterAdd, rosterSuspend, rosterReactivate, rosterMoveStation,
+        rosterResetPassword, signupAccount, newMemorablePassword,
     } from './assets/api.js';
     import { CONFIG } from './assets/config.js';
 
     /* --- state ----------------------------------------------------------- */
-    let tab = 'sales';          // sales | turnover | menu | categories
+    let tab = 'sales';          // sales | turnover | menu | categories | roster
     let sales = null;           // last salesSummary payload
     let salesErr = null;        // error code from the last sales read
     let salesGrain = 'daily';
@@ -108,6 +112,9 @@
     let claimsErr = null;
     let armed = null;           // { orderId, code, until } — void two-step guard
     let toast = null;           // {msg, until} — transient success line
+    let roster = [];            // staff_roster rows (roster_list), role then display_name
+    let rosterErr = null;       // error code from the last roster read
+    let oneTime = null;         // { kind, email, password } — shown ONCE, cleared on dismiss
 
     const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -116,8 +123,14 @@
          raw code string. */
     const GATE_COPY = "Owner sign-in required — add ?email=&password= to this URL once.";
     const AUTH_COPY = "Those credentials weren't accepted. Check the URL — nothing was stored.";
+    /* LEGACY copy for the CONFIG.ownerEmails allowlist — superseded by sql/07
+       roster_role_of. Kept so the commented gate below reads whole; nothing live uses it. */
     const NOT_OWNER = "Not your dashboard. This account isn't on the owner list — the board stays closed.";
+    /* --- roster gate copy (Phase 8): the roster is the identity boundary. --- */
+    const NOT_ON_ROSTER = "This email is not on the staff roster — register through the owner who bootstrapped the system.";
+    const NOT_OWNER_STATION = "This staff member is not an owner — the owner surfaces need an owner station.";
     const MENU_SYNC = "Done — menu.html picks this up on next load.";
+    const SIGNUP_FAIL = "The cafe could not create that account — check the email and try again.";
     const ERR_COPY = {
         OWNER_SESSION_REQUIRED: "The cafe didn't recognize you as an owner. Sign in with an owner account.",
         PERMISSION_DENIED: "The cafe won't let this account do that.",
@@ -133,6 +146,15 @@
         ORDER_NOT_FOUND: "That claim isn't on the board any more — it was paid, voided, or its time ran out.",
         NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
         MENU_ITEM_UNAVAILABLE: "That item isn't on the menu right now.",
+        /* --- roster codes (sql/07_staff_roster.sql) ------------------------- */
+        STAFF_NOT_REGISTERED: "This email is not on the staff roster — register through the owner who bootstrapped the system.",
+        NOT_OWNER: "Only an active owner may do that — this station can't reach the roster.",
+        ROSTER_NOT_FOUND: "That roster row isn't there any more — refresh the list and try again.",
+        ROSTER_EXISTS: "That email is already on the roster — pick a different email, or edit the existing row.",
+        INVALID_EMAIL: "That email isn't a valid email — check the spelling and try again.",
+        INVALID_DISPLAY_NAME: "That display name is empty or over 60 characters — keep it short.",
+        INVALID_ROLE: "That station isn't one the roster knows — pick cashier or kitchen.",
+        LAST_OWNER_ONLY: "That's the only active owner — promote another staff member to owner before demoting this one.",
         NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
         HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening tell the manager.",
     };
@@ -161,17 +183,21 @@
     function daysBackISO(n) { return new Date(Date.now() - n * 86400000).toISOString(); }
     function fmtMMSS(secs) { return fmtCountdown(Math.floor(Number(secs) || 0)); }
 
-    /* --- tab bar: .nav-btn.active comes from assets/app.css -------------- */
+    /* --- tab bar: .nav-btn.active comes from assets/app.css --------------
+       Five tabs now: the strip already carries flex-wrap, so the row wraps
+       rather than shrinking — only the button padding drops a step (px-4 ->
+       px-3) to keep "Staff Roster" on one line at mobile widths. */
     const TABS = [
         { key: 'sales', label: 'Sales', icon: 'fa-chart-line' },
         { key: 'turnover', label: 'Turnover', icon: 'fa-rotate' },
         { key: 'menu', label: 'Menu', icon: 'fa-utensils' },
         { key: 'categories', label: 'Categories', icon: 'fa-layered' },
+        { key: 'roster', label: 'Staff Roster', icon: 'fa-users' },
     ];
     function renderTabBar() {
         const btns = TABS.map((t) => {
             const active = t.key === tab ? ' nav-btn active' : ' nav-btn';
-            return `<button class="${active} rounded-xl whitespace-nowrap text-sm px-4 py-2" data-tab="${t.key}">
+            return `<button class="${active} rounded-xl whitespace-nowrap text-sm px-3 py-2" data-tab="${t.key}">
                     <i class="fa-solid ${t.icon} mr-1"></i>${t.label}</button>`;
         }).join('');
         return `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">${btns}</div>`;
@@ -376,6 +402,85 @@
         return `${rows || '<p class="text-brand-muted text-sm mt-2">No categories yet.</p>'}${createForm}${delForm}`;
     }
 
+    /* --- TAB 5: staff roster (sql/07_staff_roster.sql is the identity source)
+       Rows come from roster_list, already ordered role then display_name. The
+       page is owner-gated at boot, so row actions are owner-only BY
+       CONSTRUCTION; every roster_* RPC re-gates server-side (roster_role_of ->
+       NOT_OWNER), so a hand-crafted tap still lands in a refusal.
+       One-time cards: a reset temp password and a new employee's password are
+       rendered ONCE and cleared on dismiss. Single-tap here, unlike the Tab-1
+       void two-step — a password is not a deletion, there is nothing to undo,
+       and the value only ever exists in this render, so the guard is "shown
+       once, never re-rendered" rather than an arm/confirm round trip. Nothing
+       is stored anywhere; GoTrue holds the credential, the roster never does. */
+    const ROLE_ICON = { cashier: 'fa-cash-register', kitchen: 'fa-utensils', owner: 'fa-user' };
+    const ROLE_LABEL = { cashier: 'Cashier', kitchen: 'Kitchen', owner: 'Owner' };
+
+    function renderRosterRow(r) {
+        const role = String(r.role ?? '');
+        const isOwner = role === 'owner';
+        const active = r.active === true || String(r.active) === 'true';
+        const icon = ROLE_ICON[role] ?? 'fa-user';
+        const label = ROLE_LABEL[role] ?? 'Staff';
+        const seen = r.last_seen_at ? fmtTime(r.last_seen_at) : 'never';
+        /* staff rows move between stations; owner rows promote/demote, and the
+           SQL layer refuses demoting the last active owner with LAST_OWNER_ONLY. */
+        const stationBtns = isOwner
+            ? `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-promote>Promote</button>
+                   <button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-demote>Demote</button>`
+            : `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-move data-move-role="cashier">Move to Cashier</button>
+                   <button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-move data-move-role="kitchen">Move to Kitchen</button>`;
+        const toggleBtn = (active
+            ? `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-suspend>Suspend</button>`
+            : `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-reactivate>Reactivate</button>`);
+        const resetBtn = `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-reset>Reset password</button>`;
+        return `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3 flex-wrap${active ? '' : ' opacity-60'}" data-roster-row data-roster-id="${esc(r.id ?? '')}">
+                <span class="text-brand-cream text-sm font-semibold whitespace-nowrap">${esc(r.display_name ?? '')}</span>
+                <span class="font-mono text-brand-muted text-xs ml-2">${esc(r.email ?? '')}</span>
+                <span class="rounded-md px-2 py-1 text-xs whitespace-nowrap ${isOwner ? 'text-brand-accent' : 'text-brand-muted'}"><i class="fa-solid ${icon} mr-1"></i>${label}</span>
+                ${active ? '' : `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap text-xs">Suspended</span>`}
+                <span class="font-mono text-brand-muted text-xs ml-2">seen ${seen}</span>
+                ${toggleBtn}${stationBtns}${resetBtn}
+              </div>`;
+    }
+
+    function renderOneTimeCard() {
+        if (!oneTime) return '';
+        const added = oneTime.kind === 'added';
+        const lead = added
+            ? `New employee ${oneTime.email} — copy this password across to them:`
+            : `Temporary password for ${oneTime.email}:`;
+        const note = added
+            ? 'Copy it to the clipboard and send it — it appears once, and the roster holds no password.'
+            : 'Hand it over, then have them change it on first login.';
+        return `<div class="glass-card rounded-xl p-4 my-4 text-center" data-one-time-card>
+                <p class="text-brand-accentLight text-sm font-semibold">${esc(lead)}</p>
+                <p class="font-mono text-brand-cream text-lg mt-2">${esc(oneTime.password)}</p>
+                <p class="text-brand-muted text-xs mt-2">${esc(note)}</p>
+                <p class="text-brand-muted text-xs mt-1">Tap this card to close it — the value is never re-rendered.</p>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-3" data-one-time-dismiss>Dismiss it</button>
+              </div>`;
+    }
+
+    function renderRoster() {
+        if (rosterErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(rosterErr)}</p></div>`;
+        }
+        const rows = roster.map(renderRosterRow).join('');
+        const head = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Staff roster — role and station live in sql/07, not in the browser</p>
+                ${rows || '<p class="text-brand-muted text-xs mt-1">No roster rows yet — the bootstrap owner seeds the first one.</p>'}
+              </div>`;
+        const addForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an employee — the cafe account and the roster row are created as a pair</p>
+                <input data-add-emp-name type="text" placeholder="Display name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <input data-add-emp-email type="text" placeholder="Email" spellcheck="false" autocomplete="off" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <select data-add-emp-role class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Cashier">Cashier</option><option value="Kitchen">Kitchen</option></select>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-2" data-add-emp>Add employee</button>
+              </div>`;
+        return `${head}${addForm}${renderOneTimeCard()}`;
+    }
+
     function renderToast() {
         if (!toast || Date.now() >= toast.until) return '';
         return `<div class="glass-card rounded-xl p-3 my-3 text-center">
@@ -387,7 +492,8 @@
         const body = tab === 'sales' ? renderSales()
                    : tab === 'turnover' ? renderTurnover()
                    : tab === 'menu' ? renderMenu()
-                   : renderCategories();
+                   : tab === 'categories' ? renderCategories()
+                   : renderRoster();
         document.getElementById('app').innerHTML = renderTabBar() + renderToast() + body;
     }
 
@@ -420,6 +526,15 @@
         claimsErr = null;
         claims = res.data || [];
         claims.sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+    }
+    /* roster_list is OWNER-gated: an anon or non-owner caller answers
+       OWNER_SESSION_REQUIRED / NOT_OWNER, and copyFor turns each into its own
+       human line — never the raw code, never a stack. */
+    async function loadRoster() {
+        const res = await rosterList();
+        if (!res.success) { rosterErr = res.error?.code ?? 'HTTP'; roster = []; return; }
+        rosterErr = null;
+        roster = res.data || [];
     }
 
     function say(msg) { toast = { msg, until: Date.now() + 6000 }; }
@@ -568,6 +683,108 @@
         paint();
     }
 
+    /* --- roster actions (Tab 5). The `do` prefix keeps these names clear of
+         the imported api.js bindings of the same SQL function. Every one
+         re-reads the roster after a success so the cards show the truth, and
+         every failure lands in copyFor — LAST_OWNER_ONLY included. */
+    async function doRosterSuspend(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterSuspend(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Suspended — that station is closed until it is reactivated.');
+        await loadRoster();
+        paint();
+    }
+    async function doRosterReactivate(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterReactivate(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Reactivated — the station opens again on their next sign-in.');
+        await loadRoster();
+        paint();
+    }
+    async function doRosterMove(rosterId, role) {
+        if (!rosterId || !role) { say('Pick the row and the station first.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, role);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(role === 'kitchen' ? 'Moved to the kitchen — they now stand at the pass.'
+                               : 'Moved to the register — they now stand at the till.');
+        await loadRoster();
+        paint();
+    }
+    /* Promote on an owner row is a client-side no-op: the row is already an
+       owner, so there is nothing to ask of the cafe. A staff row never shows
+       this button, but the guard below keeps a stale DOM honest. */
+    async function doRosterPromote(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const row = roster.find((r) => String(r.id) === String(rosterId));
+        if (row && String(row.role ?? '') === 'owner') { say('Already an owner — nothing to promote.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, 'owner');
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Promoted — that row now holds an owner station.');
+        await loadRoster();
+        paint();
+    }
+    /* Demote is the dangerous one: sql/07 refuses demoting the only active
+       owner with LAST_OWNER_ONLY, and that refusal is surfaced verbatim as its
+       own copy line — the owner is never left without a station. */
+    async function doRosterDemote(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, 'cashier');
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Demoted — that row now stands at the register.');
+        await loadRoster();
+        paint();
+    }
+    /* Single-tap, no arm/confirm: nothing is destroyed here, a password is
+       handed over. The guard is that the temp exists only in this render —
+       the card is dismissed and the value is gone. */
+    async function doRosterReset(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterResetPassword(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        const d = res.data || {};
+        oneTime = { kind: 'reset', email: String(d.email ?? ''), password: String(d.temp_password ?? '') };
+        paint();
+    }
+    /* PAIRING RULE (assets/api.js comment on signupAccount): the auth identity
+       and the roster row are created as a pair, so rosterAdd is attempted ONLY
+       after signupAccount succeeded. If signup fails, the roster row is never
+       attempted — a half-paired employee cannot exist. (The reverse orphan —
+       signup ok, roster_add refused — leaves an auth identity with no roster
+       row, which is inert: login.html and staff_session both refuse it.) */
+    async function doAddEmployee() {
+        const name = (document.querySelector('[data-add-emp-name]')?.value ?? '').trim();
+        const email = (document.querySelector('[data-add-emp-email]')?.value ?? '').trim();
+        const roleSel = document.querySelector('[data-add-emp-role]');
+        const roleOpt = roleSel ? selectedOption(roleSel) : null;
+        const role = (roleOpt?.value ?? 'Cashier') === 'Kitchen' ? 'kitchen' : 'cashier';
+        if (!name || !email) { say('Type a display name and an email first.'); return paint(); }
+        const pwRes = await newMemorablePassword();
+        if (!pwRes.success) { say(copyFor(pwRes.error?.code ?? 'HTTP')); return paint(); }
+        const pw = String(pwRes.data ?? '');
+        if (!pw) { say('The cafe could not generate a password. Try again.'); return paint(); }
+        const up = await signupAccount(email, pw);
+        if (!up.success) {
+            say(up.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : SIGNUP_FAIL);
+            return paint();   // pairing rule: no auth identity, so no roster row
+        }
+        /* autoconfirm is OFF in this project (MASTER_PLAN §4a), so a 2xx signup
+           can still mean "identity created but not confirmed" — that identity
+           cannot sign in, so the roster row is not added either. GoTrue's own
+           wording is never rendered; this is the page's line for that outcome. */
+        if (up.data?.action_confirmation === 'signup_email' || !up.data?.user) {
+            say('The cafe wants that email confirmed before the account can sign in — the roster row was not added. Have them confirm the email, then add them again.');
+            return paint();   // pairing rule still holds: no usable identity, no row
+        }
+        const res = await rosterAdd(email, name, role, pw);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        oneTime = { kind: 'added', email, password: pw };
+        say(`${name} is on the roster at the ${role === 'kitchen' ? 'kitchen' : 'register'} station.`);
+        await loadRoster();
+        paint();
+    }
+
     /* --- event wiring (delegated, keyed by data-*, so repainting cards
          never loses handlers) ------------------------------------------- */
     document.addEventListener('click', (e) => {
@@ -590,11 +807,42 @@
             const row = t.closest('[data-claim-row]');
             if (row) void doVoid(row.dataset.orderId, row.dataset.code ?? '');
         }
+        else if (t.dataset.rosterSuspend !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterSuspend(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterReactivate !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterReactivate(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterMove !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterMove(row.dataset.rosterId, t.dataset.moveRole);
+        }
+        else if (t.dataset.rosterPromote !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterPromote(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterDemote !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterDemote(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterReset !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterReset(row.dataset.rosterId);
+        }
+        else if (t.dataset.addEmp !== undefined) void doAddEmployee();
+        else if (t.dataset.oneTimeDismiss !== undefined) { oneTime = null; say('Closed — that password is gone from the screen.'); paint(); }
+        /* any other tap on the one-time card dismisses it too: the temp was
+           shown once, and a second look at the same card must not keep it up */
+        else if (t.closest('[data-one-time-card]')) { oneTime = null; paint(); }
     });
 
-    /* --- boot: auth gate first, THEN the owner gate (client courtesy; the
-         SQL layer double-gates with OWNER_SESSION_REQUIRED). The password is
-         never rendered, logged, or echoed — only the signed-in email. ---- */
+    /* --- boot: auth gate first, THEN the roster gate. login.html is the staff
+         door (credentials typed there, never read from a URL); sql/07_staff_roster.sql
+         decides role — staff_session() + roster_role_of are the identity boundary and
+         the SQL layer re-gates every owner/roster RPC anyway. The password is never
+         rendered, logged, or echoed — only the signed-in email. ----------------- */
     (async function () {
         const q = new URLSearchParams(location.search);
         let email = q.get('email'), password = q.get('password');
@@ -616,10 +864,29 @@
         const who = d?.user?.email || email;
         document.getElementById('ownerid').textContent = who;
 
-        const owners = CONFIG.ownerEmails || [];
-        if (!owners.length || !owners.includes(who)) { renderGate(NOT_OWNER); return; }
+        /* --- roster gate (Phase 8): the roster is the identity boundary. ----
+           staff_session() reads the caller's claims email against staff_roster and
+           refreshes last_seen_at; role and active come from that row, never from
+           the browser. STAFF_NOT_REGISTERED covers "no row" and "row suspended".
+           The ?owneremails= bootstrap stays accepted harmlessly in sl_config —
+           harmless leftover, the roster decides. */
+        const ss = await staffSession();
+        if (!ss.success) {
+            renderGate(ss.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : NOT_ON_ROSTER);
+            return;
+        }
+        const me = ss.data || {};
+        const active = me.active === true || String(me.active) === 'true';
+        if (String(me.role ?? '') !== 'owner' || !active) { renderGate(NOT_OWNER_STATION); return; }
 
-        await Promise.all([loadSales(), loadTurnover(), loadMenu(), loadClaims()]);
+        /* LEGACY, superseded by sql/07 roster_role_of — kept as a note, not deleted
+           silently: the CONFIG.ownerEmails browser allowlist used to be the whole
+           owner gate, which any signed-in user could satisfy by editing the URL.
+               const owners = CONFIG.ownerEmails || [];
+               if (!owners.length || !owners.includes(who)) { renderGate(NOT_OWNER); return; }
+        */
+
+        await Promise.all([loadSales(), loadTurnover(), loadMenu(), loadClaims(), loadRoster()]);
         paint();
     })();
 </script>

@@ -106,7 +106,8 @@ async function callSql(fn, args) {
    data = { access_token, user: { email, user_metadata } } or an error
    envelope. The access_token is what setSessionToken() takes. The
    service-role key is never involved - the publishable key authorizes
-   the call, the user's own credentials prove the session. */
+   the call, the user's own credentials prove the session.
+   Roster gate (Phase 8): after signIn succeeds, station pages must call staffSession() - an email that is signed-in but not on the roster gets STAFF_NOT_REGISTERED. */
 export async function signIn(email, password) {
   let res;
   try {
@@ -256,6 +257,104 @@ export async function uploadImage(fileName, bytes, contentType) {
   } catch {
     return err('NETWORK', NET_MSG);
   }
+}
+
+/* --- staff roster (Phase 8 identity): server-side role, sql/07 -----------
+   sql/07_staff_roster.sql is the SERVER-SIDE identity source: role and station
+   come from a staff_roster row keyed on the caller's claims email, so "signed
+   in" becomes "which station am I". Every one of these is wrapped over callSql
+   (the /rpc/ path) and the jsonb envelope is returned unchanged. Param keys are
+   p_-prefixed exactly as sql/07 declares them, or PostgREST answers PGRST202.  */
+
+/* staff_session: the identity lookup every station page calls FIRST, right
+   after signIn()+setSessionToken(). Reads the caller's claims email, finds the
+   roster row, refreshes last_seen_at, and returns {email, display_name, role,
+   active, last_seen_at}. An email that is signed-in but NOT on the roster (or
+   whose row is suspended) gets STAFF_NOT_REGISTERED - that is the gate that
+   turns a bare session into a station. */
+export async function staffSession() {
+  return await callSql('staff_session', {});
+}
+
+/* roster_list: OWNER-gated. Returns every roster row ordered role, display_name. */
+export async function rosterList() {
+  return await callSql('roster_list', {});
+}
+
+/* roster_add: OWNER-gated. Inserts a roster row with added_by = the caller's own
+   roster id. p_created_password is NOT stored anywhere - sql/07 echoes it back
+   ONCE in data so the owner can copy it to the new employee. Keys p_-prefixed
+   exactly as the SQL declares them, or PostgREST answers PGRST202. */
+export async function rosterAdd(email, displayName, role, createdPassword) {
+  return await callSql('roster_add', {
+    p_email: email, p_display_name: displayName, p_role: role,
+    p_created_password: createdPassword,
+  });
+}
+
+/* roster_suspend / roster_reactivate: OWNER-gated UPDATE active. */
+export async function rosterSuspend(rosterId) {
+  return await callSql('roster_suspend', { p_roster_id: rosterId });
+}
+export async function rosterReactivate(rosterId) {
+  return await callSql('roster_reactivate', { p_roster_id: rosterId });
+}
+
+/* roster_move_station: OWNER-gated UPDATE role (cashier <-> kitchen, also owner
+   <-> staff). Refuses demoting the only active owner (LAST_OWNER_ONLY). */
+export async function rosterMoveStation(rosterId, role) {
+  return await callSql('roster_move_station', { p_roster_id: rosterId, p_role: role });
+}
+
+/* roster_reset_password: OWNER-gated. Generates and returns a memorable temp
+   password ONCE (make_memorable_password). APPLYING that password to the GoTrue
+   auth identity is a SERVICE-ROLE operation and cannot happen from SQL or the
+   publishable-key browser path - that is the deferred service-role Edge-Function
+   bundle (PENDING OWNER APPROVAL, same class as the cron decision in MASTER_PLAN
+   §9 item 10). The temp value returned here is for the owner to hand over; the
+   employee changes it on first login. */
+export async function rosterResetPassword(rosterId) {
+  return await callSql('roster_reset_password', { p_roster_id: rosterId });
+}
+
+/* signupAccount: POST /auth/v1/signup with the PUBLISHABLE key only (apikey in
+   HEADERS, no bearer swap - the publishable key authorizes the call). This
+   creates the AUTH identity a roster row needs: SQL seeds the roster row only,
+   it cannot create auth identities. Works while the dashboard's Confirm-email
+   toggle is OFF (autoconfirm, documented in MASTER_PLAN §4a) - GoTrue creates
+   the user straight away, no verification email. Returns the GoTrue JSON wrapped
+   in the same envelope via ok(); NETWORK/HTTP failures via err().
+   FLOW (owner Tab 5): signupAccount THEN rosterAdd with the SAME credentials -
+   the auth identity and the roster row are created as a pair. If signup fails
+   the roster row is never attempted; that ordering is the caller's job, this
+   wrapper stays honest and only reports what GoTrue said. */
+export async function signupAccount(email, password) {
+  let res;
+  try {
+    res = await fetch(`${CONFIG.sbUrl}/auth/v1/signup`, {
+      method: 'POST',
+      headers: { apikey: CONFIG.sbKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch {
+    return err('NETWORK', NET_MSG);
+  }
+  if (!res.ok) {
+    let msg = 'The account could not be created.';
+    try { const b = await res.json(); if (b?.msg_desc || b?.error_description) msg = b.msg_desc || b.error_description; } catch {}
+    return err('HTTP', msg);
+  }
+  try { return ok(await res.json()); } catch { return err('HTTP', 'the signup response could not be read'); }
+}
+
+/* make_memorable_password: the shared generator (word-word-Number, e.g.
+   Caramel-Latte-42). Two uses: Tab 5 calls it to PROPOSE the new employee's
+   password before signupAccount (so the owner never types a throwaway
+   credential), and roster_reset_password returns one server-side for the
+   deferred service-role bundle. CSPRNG-backed inside sql/07, same draw style
+   create_order uses for the 5-digit claim code. */
+export async function newMemorablePassword() {
+  return await callSql('make_memorable_password', {});
 }
 
 /* ===========================================================================
