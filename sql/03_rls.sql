@@ -15,6 +15,9 @@
 --   authenticated = anyone who passed Supabase Auth password login
 --                   (cashier / kitchen / owner). role = 'authenticated'.
 --                   Being signed in proves nothing about WHO they are.
+--                   Identity is now resolved by staff_session() in sql/07_staff_roster.sql:
+--                   role/station come from the staff_roster table, not from CONFIG.ownerEmails
+--                   alone. Roster policies deliberately live IN 07 (apply order 01->...->07).
 --
 -- WHY EVERY TABLE ACCESS IN 02 NEEDS A POLICY
 --   RLS is enforced for the effective user of EVERY statement, including the

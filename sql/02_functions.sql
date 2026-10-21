@@ -84,6 +84,10 @@
 --   three hours: buckets came back 2026-10-18 then 2026-10-19 and peak_hours 9, 14,
 --   20, and p95 read 300 (OFFSET FLOOR(3*0.95)=2 over [100,200,300]), so revenue,
 --   aov, avg and p95 math all check out.
+--
+-- DEPENDS ON 07_staff_roster.sql AT CALL TIME: jwt_claims_email()/roster_role_of()
+--   are defined there; plpgsql resolves those calls at runtime, so the apply order
+--   01->02->03->04->05->06->07 must complete before any function here is called.
 -- ============================================================================
 
 
@@ -177,7 +181,15 @@ $$ LANGUAGE plpgsql;
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION claim_view (p_order_id uuid)
 RETURNS jsonb AS $$
+DECLARE
+  email text; role text;
 BEGIN
+  -- station fence (roster): claim_view runs for cashier only — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier only')); END IF;
   RETURN (SELECT jsonb_build_object(
               'order_id', o.id,
               'code', o.code, 'customer_name', o.customer_name,
@@ -209,7 +221,15 @@ RETURNS jsonb AS $$
 DECLARE
   open_id uuid;
   row_o jsonb;
+  email text;
+  role text;
 BEGIN
+  -- station fence (roster): get_order_by_code runs for cashier, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier or owner')); END IF;
   open_id := (SELECT o.id FROM orders AS o
               WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= now());
   IF open_id IS NULL THEN
@@ -258,7 +278,14 @@ CREATE OR REPLACE FUNCTION list_active_pending()
 RETURNS jsonb AS $$
 DECLARE
   rows jsonb := '[]'::jsonb;
+  email text; role text;
 BEGIN
+  -- station fence (roster): list_active_pending runs for cashier, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier or owner')); END IF;
   PERFORM purge_expired_orders();
   rows := COALESCE((SELECT jsonb_agg(jsonb_build_object(
                 'order_id', o.id,
@@ -284,7 +311,15 @@ RETURNS jsonb AS $$
 DECLARE
   stamp timestamptz;
   row_o jsonb;
+  email text;
+  role text;
 BEGIN
+  -- station fence (roster): confirm_payment runs for cashier, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier or owner')); END IF;
   stamp := now();
   UPDATE orders AS o
     SET status = 'paid', paid_at = stamp
@@ -316,7 +351,14 @@ CREATE OR REPLACE FUNCTION kitchen_queue()
 RETURNS jsonb AS $$
 DECLARE
   rows jsonb := '[]'::jsonb;
+  email text; role text;
 BEGIN
+  -- station fence (roster): kitchen_queue runs for kitchen, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('kitchen', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for kitchen or owner')); END IF;
   PERFORM purge_expired_orders();
   rows := COALESCE((SELECT jsonb_agg(jsonb_build_object(
                 'order_id', o.id,
@@ -347,7 +389,15 @@ RETURNS jsonb AS $$
 DECLARE
   stamp timestamptz;
   row_o jsonb;
+  email text;
+  role text;
 BEGIN
+  -- station fence (roster): mark_served runs for kitchen, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('kitchen', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for kitchen or owner')); END IF;
   stamp := now();
   UPDATE orders AS o
     SET status = 'served',
@@ -379,7 +429,14 @@ CREATE OR REPLACE FUNCTION set_preparing (order_id uuid)
 RETURNS jsonb AS $$
 DECLARE
   row_o jsonb;
+  email text; role text;
 BEGIN
+  -- station fence (roster): set_preparing runs for kitchen, owner — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('kitchen', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for kitchen or owner')); END IF;
   UPDATE orders AS o
     SET status = 'preparing'
     WHERE o.id = order_id AND o.status = 'paid';
@@ -404,7 +461,14 @@ CREATE OR REPLACE FUNCTION void_order (order_id uuid)
 RETURNS jsonb AS $$
 DECLARE
   row_o jsonb;
+  email text; role text;
 BEGIN
+  -- station fence (roster): void_order runs for owner only — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for owner only')); END IF;
   row_o := (SELECT jsonb_build_object('order_id', o.id, 'code', o.code, 'customer_name', o.customer_name, 'total_amount', o.total_amount)
            FROM orders AS o WHERE o.id = order_id AND o.status = 'pending_payment');
   IF row_o IS NULL THEN
@@ -436,7 +500,15 @@ DECLARE
   live jsonb;
   lines integer;
   total numeric;
+  email text;
+  role text;
 BEGIN
+  -- station fence (roster): set_claim_item_qty runs for cashier only — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier only')); END IF;
   live := claim_view(p_order_id);
   IF live IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim is not open for edits'));
@@ -488,7 +560,15 @@ DECLARE
   qty integer;
   existing_id uuid;
   total numeric;
+  email text;
+  role text;
 BEGIN
+  -- station fence (roster): add_claim_item runs for cashier only — sql/07 roster_role_of
+  email := jwt_claims_email();
+  role := roster_role_of(email);
+  IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
+  IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
+  IF role NOT IN ('cashier') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier only')); END IF;
   live := claim_view(p_order_id);
   IF live IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CLAIM_NOT_OPEN', 'message', 'that claim is not open for edits'));
@@ -533,8 +613,9 @@ $$ LANGUAGE plpgsql;
 -- ===== PHASE 5: OWNER ANALYTICS + MENU BUILDER =====
 -- OWNER GATE: each fn below reads the caller's JWT claims via the Supabase
 -- idiom current_setting('request.jwt.claims', true). Presence check ONLY - it proves a
--- signed-in session, it is NOT the allowlist (CONFIG.ownerEmails is checked
--- page-side; RLS in 03_rls.sql plus this guard are the boundary). `from`, `to`
+-- signed-in session exists; the identity boundary is now roster_role_of(email) in
+-- sql/07_staff_roster.sql, whose NOT_OWNER fence refuses a signed-in non-owner (CONFIG.ownerEmails
+-- stays a page-side UI gate; RLS in 03_rls.sql plus the roster fence are the boundary). `from`, `to`
 -- and `order` are reserved words, so params are from_time / to_time / new_order.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION sales_summary (from_time timestamptz, to_time timestamptz, grain text)
@@ -546,6 +627,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   IF grain NOT IN ('daily', 'monthly', 'yearly') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_GRAIN', 'message', 'grain must be daily, monthly or yearly')); END IF;
   fmt := CASE grain WHEN 'yearly' THEN 'YYYY' WHEN 'monthly' THEN 'YYYY-MM' ELSE 'YYYY-MM-DD' END;
   -- completed sales ONLY: status 'served', paid inside the window
@@ -575,6 +658,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   cnt := COALESCE((SELECT COUNT(*) FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
   avg_s := COALESCE((SELECT AVG(o.fulfillment_time_seconds)::int FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
   -- p95 by position: sort the durations, skip FLOOR(count*0.95) rows, take the next one.
@@ -604,6 +689,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   IF COALESCE(TRIM(name), '') = '' OR LENGTH(TRIM(name)) > 80 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_CATEGORY_NAME', 'message', 'category name must be 1-80 characters')); END IF;
   new_id := gen_random_uuid();
   INSERT INTO categories (id, name, display_order) VALUES (new_id, TRIM(name), COALESCE(display_order, 0));
@@ -622,6 +709,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   IF jsonb_typeof(new_order) <> 'array' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ORDER', 'message', 'new_order must be an array of category uuids')); END IF;
   FOR idx IN 0 .. jsonb_array_length(new_order) - 1 LOOP
     raw := COALESCE(new_order ->> idx, '');
@@ -660,6 +749,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   cat := (SELECT jsonb_build_object('category_id', c.id, 'name', c.name) FROM categories AS c WHERE c.id = p_category_id);
   IF cat IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CATEGORY_NOT_FOUND', 'message', 'that category is not on the menu')); END IF;
   IF p_fallback_category_id IS NOT NULL THEN
@@ -694,6 +785,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   cat := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = category_id);
   IF cat IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CATEGORY_NOT_FOUND', 'message', 'that category is not on the menu')); END IF;
   IF COALESCE(TRIM(name), '') = '' OR LENGTH(TRIM(name)) > 120 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEM_NAME', 'message', 'item name must be 1-120 characters')); END IF;
@@ -724,6 +817,8 @@ BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
+  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
+  IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
   current := (SELECT jsonb_build_object('name', m.name, 'description', m.description, 'image_url', m.image_url,
                                         'sizes_and_prices', m.sizes_and_prices, 'is_available', m.is_available)
                FROM menu_items AS m WHERE m.id = p_menu_item_id);
