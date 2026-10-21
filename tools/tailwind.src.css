@@ -1,0 +1,12 @@
+/* ===========================================================================
+   tools/tailwind.src.css — compile seed for the Phase-B Tailwind build.
+   ---------------------------------------------------------------------------
+   This is the input to the Tailwind v3 CLI. The CDN (cdn.tailwindcss.com)
+   injected Tailwind's base preflight + the full utility set at RUNTIME in
+   Phase A; here we reproduce that statically so the compiled artifact
+   (assets/tailwind.compiled.css) ships the same rules to production.
+   =========================================================================== */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

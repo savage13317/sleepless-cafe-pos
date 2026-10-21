@@ -8,8 +8,7 @@
     <meta name="robots" content="noindex">
     <title>Sleepless Cafe | Kitchen</title>
 
-    <!-- Tailwind CSS CDN (Phase A only — Phase B swaps to compiled CSS) -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tailwind utilities: compiled CSS (Phase B build; loads below, after app.css, to match the CDN's runtime injection order) -->
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts: Inter & Playfair Display -->
@@ -18,8 +17,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
 
     <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
-         above the inline config script below, because that script reads the
-         :root custom properties out of the resolved stylesheet. -->
+         above app.css below, because app.css consumes the :root custom
+         properties out of the resolved stylesheet. -->
     <link rel="stylesheet" href="assets/tokens.css">
     <link rel="stylesheet" href="assets/app.css">
 
@@ -27,45 +26,8 @@
          GitHub Pages answers 404 — a dead request on every visit. SVG only, self-contained. -->
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 
-    <!-- Tailwind palette is READ from assets/tokens.css, never re-declared here.
-         Gate A: tokens.css is the single source of truth for brand colors, so
-         changing a brand color means editing tokens.css only. The neutral
-         fallback below is deliberately not a brand color — it exists so a failed
-         stylesheet load can never inject `undefined` into generated CSS. -->
-    <script>
-        (function () {
-            var cs = getComputedStyle(document.documentElement);
-            var T = function (name) {
-                var v = cs.getPropertyValue(name).trim();
-                return v || 'black'; /* neutral fallback, never a brand color */
-            };
-            var F = function (name) {
-                return T(name).split(',').map(function (s) { return s.trim(); });
-            };
-            tailwind.config = {
-                theme: {
-                    extend: {
-                        colors: {
-                            brand: {
-                                dark: T('--brand-dark'),
-                                card: T('--brand-card'),
-                                cardHover: T('--brand-card-hover'),
-                                accent: T('--brand-accent'),
-                                accentLight: T('--brand-accent-light'),
-                                cream: T('--brand-cream'),
-                                muted: T('--brand-muted'),
-                                border: T('--brand-border')
-                            }
-                        },
-                        fontFamily: {
-                            sans: F('--font-sans'),
-                            serif: F('--font-serif')
-                        }
-                    }
-                }
-            };
-        })();
-    </script>
+    <!-- Tailwind utilities, compiled at build time from tools/tailwind.config.js, which READS assets/tokens.css — tokens.css stays the single source of truth; regenerate the artifact (node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m) whenever a token changes. Loaded HERE (after tokens.css + app.css) because the CDN injected its generated stylesheet at runtime, after every head link — same cascade. -->
+    <link rel="stylesheet" href="assets/tailwind.compiled.css">
 </head>
 
 <!-- `kds` opts this page into the high-contrast KDS scope in assets/app.css
@@ -221,7 +183,7 @@
         }).join('');
         const holdBtn = holding
             ? ''
-            : `<button class="rounded-lg whitespace-nowrap text-xs min-height-[48px] px-3 py-2 mt-2 bg-brand-card/60 border border-brand-border text-brand-cream" data-hold>Hold</button>`;
+            : `<button class="rounded-lg whitespace-nowrap text-xs min-h-[48px] px-3 py-2 mt-2 bg-brand-card/60 border border-brand-border text-brand-cream" data-hold>Hold</button>`;
         return `<div class="glass-card rounded-xl p-5 my-4" data-order-card data-order-id="${esc(r.order_id ?? '')}" data-code="${esc(code)}">
                 <div class="flex items-baseline space-between flex-wrap">
                   <p class="text-brand-cream text-lg font-serif whitespace-nowrap">${esc(r.customer_name ?? '')}</p>
