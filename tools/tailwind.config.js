@@ -44,11 +44,13 @@ function fonts(name) {
 }
 
 module.exports = {
-  /* Scan ONLY the five POS entry points. Sleepless.html is design reference
+  /* Scan the POS entry points. login.html is the staff door (Gate B, unindexed)
+     and now contributes its own utilities. Sleepless.html stays design reference
      only and must not contribute classes to the production stylesheet. */
   content: [
     'index.html',
     'menu.html',
+    'login.html',
     'cashier.html',
     'kitchen.html',
     'owner.html',
