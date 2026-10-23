@@ -117,6 +117,11 @@
        native <select>, so whether it is showing is OUR state — a repaint cannot
        close it, which a browser popup could (see focusToggle below). */
     let focusOpen = false;
+    /* Sweep: the menu builder, category and roster-role pickers were native
+       <select>s, unusable by tap in Chrome (see chipPicker). The current choice
+       is OUR page-level state in `pick` (picker key -> chosen option id), so a
+       repaint cannot lose it the way a browser popup could. */
+    const pick = new Map();
     let turn = null;            // last turnoverStats payload
     let turnErr = null;
     let turnDays = 30;
@@ -345,11 +350,23 @@
     }
 
     /* --- TAB 3: menu ----------------------------------------------------- */
-    function catOptions(selectedName) {
-        return cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}"${c.name === selectedName ? ' selected' : ''}>${esc(c.name ?? '')}</option>`).join('');
-    }
-    function itemOptions() {
-        return items.map((it) => `<option value="${esc(it.name ?? '')}" data-item-id="${esc(it.id ?? '')}">${esc(it.name ?? '')}</option>`).join('');
+    /* Sweep: native <select>s are unusable by tap in Chrome — a styled <select>
+       draws its own popup that opens on mousedown and closes on mouseup, so one
+       tap flashes the list and selects nothing (and on a phone the picker is
+       OS-coloured, dark-on-dark). Same defect the Sales Focus tab had, fixed the
+       same way: the options are OUR DOM chips and the current choice is OUR
+       page-level state in `pick`, so a repaint cannot lose it. Tapping a chip
+       sets the choice; the chosen chip is filled AND carries aria-current, so
+       selection is never conveyed by colour alone. */
+    function chipPicker(key, options) {
+        const chosen = pick.get(key);
+        const chips = options.map((o) => {
+            const on = chosen === o.id;
+            const cls = `nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap${on ? ' bg-brand-accent/30 border border-brand-accent' : ''}`;
+            const aria = on ? ' aria-current="true"' : '';
+            return `<button class="${cls}" data-pick="${key}" data-pick-id="${esc(o.id)}"${aria}>${esc(o.label)}</button>`;
+        }).join('');
+        return `<div class="flex gap-2 flex-wrap">${chips}</div>`;
     }
 
     function renderItemCard(it) {
@@ -374,21 +391,21 @@
         }).join('');
         const addForm = `<div class="glass-card rounded-xl p-4 my-4">
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an item</p>
-                <select data-add-cat class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${catOptions('')}</select>
+                ${chipPicker('add-cat', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })))}
                 <input data-add-name type="text" placeholder="Item name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
                 <input data-add-desc type="text" placeholder="Description (optional)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
                 <textarea data-add-sizes placeholder="Small=120&#10;Large=150" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
-                <select data-add-avail class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Available">Available</option><option value="Hidden">Hidden</option></select>
+                ${chipPicker('add-avail', [{ id: 'Available', label: 'Available' }, { id: 'Hidden', label: 'Hidden' }])}
                 <input data-add-photo type="file" accept="image/*" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-add-item>Add item</button>
               </div>`;
         const editForm = `<div class="glass-card rounded-xl p-4 my-4">
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Edit an item (blank = keep)</p>
-                <select data-edit-item class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${itemOptions()}</select>
+                ${chipPicker('edit-item', items.map((it) => ({ id: String(it.id), label: it.name ?? '' })))}
                 <input data-edit-name type="text" placeholder="New name (blank = keep)" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
                 <input data-edit-desc type="text" placeholder="New description (blank = keep)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
                 <textarea data-edit-sizes placeholder="Small=120&#10;Large=150 (blank = keep)" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
-                <select data-edit-avail class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Keep">Keep availability</option><option value="Available">Make available</option><option value="Hidden">Make hidden</option></select>
+                ${chipPicker('edit-avail', [{ id: 'Keep', label: 'Keep availability' }, { id: 'Available', label: 'Make available' }, { id: 'Hidden', label: 'Make hidden' }])}
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-edit-item-go>Save edits</button>
               </div>`;
         return `${groups || '<p class="text-brand-muted text-sm mt-2">The menu is empty right now.</p>'}${addForm}${editForm}`;
@@ -405,11 +422,10 @@
                 <button class="rounded-lg px-2 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-up>Up</button>
                 <button class="rounded-lg px-2 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-down>Down</button>
               </div>`).join('');
-        const fallbackOptions = cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}">${esc(c.name ?? '')}</option>`).join('');
         const delForm = `<div class="glass-card rounded-xl p-4 my-4">
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Delete a category — move items to which category?</p>
-                <select data-del-cat class="rounded-lg text-sm text-brand-cream bg-brand-card/60 border border-brand-border">${cats.map((c) => `<option value="${esc(c.name ?? '')}" data-cat-id="${esc(c.id ?? '')}">${esc(c.name ?? '')}</option>`).join('')}</select>
-                <select data-del-fallback class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-2">${fallbackOptions}<option value="Delete items too" data-drop-items>Delete items too</option></select>
+                ${chipPicker('del-cat', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })))}
+                ${chipPicker('del-fallback', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })).concat([{ id: 'DROP', label: 'Delete items too' }]))}
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-delete-cat>Delete category</button>
               </div>`;
         const createForm = `<div class="glass-card rounded-xl p-4 my-4">
@@ -493,7 +509,7 @@
                 <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an employee — the cafe account and the roster row are created as a pair</p>
                 <input data-add-emp-name type="text" placeholder="Display name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
                 <input data-add-emp-email type="text" placeholder="Email" spellcheck="false" autocomplete="off" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
-                <select data-add-emp-role class="rounded-lg text-xs text-brand-cream bg-brand-card/60 border border-brand-border mt-1"><option value="Cashier">Cashier</option><option value="Kitchen">Kitchen</option></select>
+                ${chipPicker('add-emp-role', [{ id: 'Cashier', label: 'Cashier' }, { id: 'Kitchen', label: 'Kitchen' }])}
                 <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-2" data-add-emp>Add employee</button>
               </div>`;
         return `${head}${addForm}${renderOneTimeCard()}`;
@@ -711,21 +727,16 @@
         }
         return out;
     }
-    function selectedOption(select) {
-        const opts = select.querySelectorAll('option');
-        for (const o of opts) if (o.value === select.value) return o;
-        return opts.length ? opts[0] : null;
-    }
+    /* The pickers are DOM chips now (see chipPicker), so the chosen option is
+       read from `pick` rather than a native select's .value — no dead helper. */
 
     async function addItem() {
-        const catSel = document.querySelector('[data-add-cat]');
-        const opt = catSel ? selectedOption(catSel) : null;
-        const catId = opt?.dataset.catId;
+        const catId = pick.get('add-cat');
         const name = (document.querySelector('[data-add-name]')?.value ?? '').trim();
         if (!catId || !name) { say('Pick a category and type an item name first.'); return paint(); }
         const desc = document.querySelector('[data-add-desc]')?.value ?? '';
         const sizes = parseSizes(document.querySelector('[data-add-sizes]')?.value);
-        const avail = (document.querySelector('[data-add-avail]')?.value ?? 'Available') !== 'Hidden';
+        const avail = (pick.get('add-avail') ?? 'Available') !== 'Hidden';
         let imgUrl = null;
         const photoInput = document.querySelector('[data-add-photo]');
         const file = photoInput ? photoInput.files[0] : null;
@@ -743,15 +754,13 @@
     }
 
     async function editItem() {
-        const sel = document.querySelector('[data-edit-item]');
-        const opt = sel ? selectedOption(sel) : null;
-        const id = opt?.dataset.itemId;
+        const id = pick.get('edit-item');
         if (!id) { say('Pick the item to edit first.'); return paint(); }
         const name = document.querySelector('[data-edit-name]')?.value ?? '';
         const desc = document.querySelector('[data-edit-desc]')?.value ?? '';
         const sizesRaw = (document.querySelector('[data-edit-sizes]')?.value ?? '').trim();
         const sizes = sizesRaw ? parseSizes(sizesRaw) : null;
-        const availText = document.querySelector('[data-edit-avail]')?.value ?? 'Keep';
+        const availText = pick.get('edit-avail') ?? 'Keep';
         const avail = availText === 'Keep' ? null : availText === 'Available';
         const res = await updateMenuItem(id, name, desc, null, sizes, avail);
         if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
@@ -788,15 +797,12 @@
     }
 
     async function doDeleteCategory() {
-        const catSel = document.querySelector('[data-del-cat]');
-        const opt = catSel ? selectedOption(catSel) : null;
-        const catId = opt?.dataset.catId;
+        const catId = pick.get('del-cat');
         if (!catId) { say('Pick the category to delete first.'); return paint(); }
-        const fbSel = document.querySelector('[data-del-fallback]');
-        const fbOpt = fbSel ? selectedOption(fbSel) : null;
-        /* "Delete items too" carries data-drop-items and maps to a null
-           fallback — the SQL layer then removes the items as well. */
-        const fallback = fbOpt?.dataset?.dropItems !== undefined ? null : (fbOpt?.dataset?.catId ?? null);
+        const fb = pick.get('del-fallback');
+        /* "Delete items too" is the DROP chip — it maps to a null fallback, so
+           the SQL layer removes the items as well. */
+        const fallback = fb === 'DROP' ? null : fb;
         if (String(fallback ?? '') === String(catId)) { say("Can't move items into the category being deleted."); return paint(); }
         const res = await deleteCategory(catId, fallback);
         if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
@@ -897,9 +903,7 @@
     async function doAddEmployee() {
         const name = (document.querySelector('[data-add-emp-name]')?.value ?? '').trim();
         const email = (document.querySelector('[data-add-emp-email]')?.value ?? '').trim();
-        const roleSel = document.querySelector('[data-add-emp-role]');
-        const roleOpt = roleSel ? selectedOption(roleSel) : null;
-        const role = (roleOpt?.value ?? 'Cashier') === 'Kitchen' ? 'kitchen' : 'cashier';
+        const role = (pick.get('add-emp-role') ?? 'Cashier') === 'Kitchen' ? 'kitchen' : 'cashier';
         if (!name || !email) { say('Type a display name and an email first.'); return paint(); }
         const pwRes = await newMemorablePassword();
         if (!pwRes.success) { say(copyFor(pwRes.error?.code ?? 'HTTP')); return paint(); }
@@ -953,6 +957,9 @@
             focusOpen = !focusOpen;
             paint();
         }
+        /* Tapping a picker chip records the choice in page-level state and
+           repaints so the chosen chip shows filled + aria-current. */
+        else if (t.dataset.pick !== undefined) { pick.set(t.dataset.pick, t.dataset.pickId); paint(); }
         else if (t.dataset.export !== undefined) void exportCsv();
         else if (t.dataset.turnDays !== undefined) { turnDays = Number(t.dataset.turnDays); void (async () => { await loadTurnover(); paint(); })(); }
         else if (t.dataset.addItem !== undefined) void addItem();
