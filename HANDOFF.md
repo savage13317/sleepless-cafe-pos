@@ -1,13 +1,13 @@
 # HANDOFF.md — Sleepless Cafe POS · continuation brief
 
-**Written:** 2026-10-19 · **updated:** 2026-10-24 · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
+**Written:** 2026-10-19 · **updated:** 2026-10-23 (Phase 9 files + **9g second store `marcelas`**, §15) · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
 **Where we are:** Phases 1–7 done · **Phase 5 gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes
 conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
 host** — Gate A green except the manual phone run — the Gate A audit fixed three public-host defects
 (commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
 `2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
 no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
-payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets). · **UI/UX sweep 2026-10-21 SHIPPED: committed + pushed `4888f24..614b9f3`, public-host door proof green — §12** · **UI sweep 2 2026-10-21 SHIPPED: committed + pushed `9bd7ee9..fe296fb` (three chunks), all seven items re-proven on the public host — §13**
+payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets). · **UI/UX sweep 2026-10-21 SHIPPED: committed + pushed `4888f24..614b9f3`, public-host door proof green — §12** · **UI sweep 2 2026-10-21 SHIPPED: committed + pushed `9bd7ee9..fe296fb` (three chunks), all seven items re-proven on the public host — §13** · **Phase 9 (multi-store + tier model) — 9a SCHEMA + 9b sid-seed + 9c JWT helpers & authenticated policy swap ALL APPLIED LIVE 2026-10-23 (verified: stores=1 flagship; 3 roster identities carry `raw_user_meta_data.sid`=flagship id; 5 JWT helpers installed; authenticated policies store-scoped via `jwt_store_id()` with `stores` policies using `id` not `store_id` — 08 latent bug fixed on apply; interim option B keeps anon read broad, anon menu read still HTTP 200 flagship); **9d FUNCTION DELTA APPLIED LIVE + VERIFIED 2026-10-23** (all 02/07 function bodies now store-scoped via `jwt_store_id()` + tier-gated via `tier_gate`/`starter_write_gate`/`cap_allows` — chunks 1–5 all 201; new anon-callable routing helpers `resolve_store`/`menu_for_store`/`categories_for_store` + `purge_expired_orders_store`/`purge_expired_orders_all` installed; `stores_read_public` anon policy `FOR SELECT TO anon USING (is_open=true)` installed to close the store-directory gap — anon `GET /stores` now returns flagship; anon call-tests green: `resolve_store?slug=flagship`→success, `?slug=ghost`→STORE_NOT_FOUND, `menu_for_store`/`categories_for_store` return full flagship data, `get_order_by_code` anon→STAFF_SESSION_REQUIRED body-ran; authenticated cross-store DENIAL + tier-gate probes deferred to 9e staff-JWT login per §5.3); **9e FRONTEND APPLIED (working tree, NOT committed) 2026-10-23**: `config.js` gained `storeSlug` (default `flagship`, priority window→localStorage→committed); `api.js` gained anon-callable `resolveStore`/`menuForStore`/`categoriesForStore`; `menu.html` customer path now resolves `?store=<slug>` (default `flagship`) → `resolve_store` → caches `{slug,storeId,tier}` in `localStorage.sl_store` TTL 60s → loads via `menu_for_store`/`categories_for_store` (store-scoped; rows carry no `is_available`, filter relaxed to `!== false`); `owner.html` captures `staff_session().data.tier` into `ownerTier` and pre-gates cashier/kitchen adds with an upgrade banner (avoids orphan identity), plus `TIER_REQUIRED`/`MENU_LIMIT_REACHED`/`STORE_CONTEXT_REQUIRED`/`STORE_MISMATCH` copy. Browser-verified on local static server (:8731, working tree): `menu.html?store=flagship`→5 tabs+items, `?store=ghost`→"branch isn't open" copy, no-param→flagship (backward-compat); `owner.html` parses (renders sign-in gate). cashier/kitchen need NO change (store axis is JWT-driven via `jwt_store_id()`). **OPEN DECISION: flagship seeded `tier=starter` → owner can no longer add cashier/kitchen staff or new menu items on it (tier not self-servable; flip only via service_role). Existing flagship staff/items predate the gate. Confirm flagship should be `pro` (unrestricted) or stay `starter`.** Authenticated live tier-gate probe still needs a human owner login (bcrypt pw unrecoverable). 9f cron/Vercel PARKED — §14**
 
 Read this file top to bottom before touching anything. Sections 1–3 are facts that were
 **verified against the live project** — they contradict several plausible-looking assumptions,
@@ -297,6 +297,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `tools/cron/purge-expired.json` | **New (2026-10-21), NOT registered.** The `*/15 * * * *` cron spec (array-wrapped so `supabase cron add -f` accepts it); its Notes carry the live-application steps. |
 | `package.json` + `package-lock.json` | **New (2026-10-21).** Pins `tailwindcss ^3.4.17` — the major version the CDN served at runtime, so the compiled output matches what the pages used to receive from `cdn.tailwindcss.com`. |
 | `sql/07_staff_roster.sql` | **New (2026-10-21), LIVE since 2026-10-21 (pasted in 4 chunks, all 201).** `staff_roster` table (email-keyed UNIQUE, `added_by` self-FK `ON DELETE RESTRICT`, no password column — `pw_note` is free text, never a secret) + its own RLS (`roster_authenticated_read`/`_write_insert`/`_write_update`/`_delete`, **no anon policy at all**) + 11 functions (`jwt_claims_email`, `roster_role_of`, `cap_word`, `make_memorable_password`, `staff_session`, `roster_list`, `roster_add`, `roster_suspend`, `roster_reactivate`, `roster_move_station`, `roster_reset_password`) + **3 seed rows** — `dev@sleepless-cafe.test` owner, `cashier-probe@…` cashier, `kitchen-probe@…` kitchen. Idempotent; **APPLY AFTER 06**. |
+| `sql/08_multitenant.sql` | **NEW 2026-10-23 — 32,869 B / 623 lines. NOT applied to the live DB, NOT committed.** The Phase 9 migration: `stores` table (slug UNIQUE + `tier CHECK IN ('starter','pro')`) seeded with the legacy store, four bare `ALTER TABLE … ADD COLUMN store_id uuid NOT NULL DEFAULT <legacy-uuid> REFERENCES stores ON DELETE RESTRICT` (menu_items / categories / orders / staff_roster), `created_at` on `order_items`, the five store-scoped indexes, the JWT helpers (`jwt_store_id`, `store_tier_of`, `cap_allows`, `tier_gate`, `starter_write_gate`), the store-scoped policy swap, and the new RPCs (`resolve_store`, `menu_for_store`, `categories_for_store`, `purge_expired_orders_store`, `purge_expired_orders_all`). **APPLY AFTER 07.** Its schema block runs ONCE — a re-paste aborts atomically on the duplicate-column error, which is the safe re-run signal. Header carries the do-not-re-derive list. |
+| `MULTI_TENANT_SPEC.md` | **NEW 2026-10-23 — 19,956 B / 327 lines. NOT committed.** The architecture spec + refactoring plan the human asked for: §1 multi-tenant schema/RLS contract · §2 tier model + gating matrix · §3 realtime + 30-min expiry · §4 routing/auth (Pages vs Vercel, store token options A/B/C) · §5 per-function gating delta · §6 safe-migration roadmap 9a→9f + a 6-probe verification checklist. **Numbering is cross-referenced from `sql/08_multitenant.sql` — do not renumber either file.** |
 | `login.html` | **New (2026-10-21), 215 lines, NOT linked from any page.** The staff door: credentials **typed in the page**, never read from the URL; `signIn` → `setSessionToken` → `staff_session` proves the roster row, then `window.location.replace` routes to `cashier.html` / `kitchen.html` / `owner.html` by role. Persists `{email,password}` to `localStorage.sl_auth` for the station boot. `noindex`, unlinked. **UI/UX sweep 2026-10-21 (files only, not yet committed):** the card no longer spills full-width — the `</div>` written after a VOID `<input>` was closing the card early; `renderCard`/`openForm` use `glass-card rounded-xl p-6 my-6 mx-auto max-w-md flex flex-col gap-3`, inputs end bare with `py-2 min-h-[48px]`, Sign-in button `mt-3 w-full` |
 
 All five pages (`index.html`, `menu.html`, `cashier.html`, `kitchen.html`, `owner.html`) now carry the
@@ -473,7 +475,10 @@ Four more defects reported from the live page, all in `menu.html` + `assets/app.
   `87121`, `02910`, `51408` — were all voided with `void_order` (`"voided": true` each). `list_active_pending`
   now returns `[]` and `orders` / `order_items` are back to 6 / 6 rows, matching the counts above.
 
-**Start here next  →  E. Phase 8  —  Vercel go-live. PREP DONE (2026-10-21), the phase itself still parked.**
+**Start here next  →  G. Phase 9  —  multi-store + tier model. FILES DELIVERED 2026-10-23, NOTHING applied live, NOTHING committed (see §14).**
+Read `MULTI_TENANT_SPEC.md` §6 first: the order is **9a schema-only → 9b re-issue staff identities with `data:{sid}` → 9c policy swap + store token (ship as ONE step) → 9d function delta → 9e frontend → 9f gated cron/Vercel**. Every step needs human approval before it touches the live DB, and 9a must be verified with the §6 probe list before 9b is attempted.
+
+**E. Phase 8  —  Vercel go-live. PREP DONE (2026-10-21), the phase itself STILL PARKED** (its open items are the "REMAINING Phase-8 items" list at the end of this section). Prep already landed:
 - **Tailwind CDN  →  compiled CSS  —  DONE.** All five pages now load `assets/tailwind.compiled.css` (12,139 B
   committed artifact) at line 30, after `assets/app.css`, matching the CDN's runtime injection cascade.
   `tools/tailwind.config.js` reads `assets/tokens.css` at build time, so `tokens.css` stays single-source.
@@ -1098,3 +1103,153 @@ at 48 px tall, still 30 after a 6 s repaint, and tapping `2026-10-20` folded the
   `.hidden` as a CLASS is a separate Tailwind utility and is not what this uses.
 - `repeat(auto-fit, minmax(4.5rem, 1fr))` collapses the lanes an item does not use, so equal lanes stay predictable
   without leaving a dead column; cap the chip itself (`max-width` + `justify-items: center`) if the lanes get wide.
+
+---
+
+## 14. Phase 9 — multi-store (multi-tenancy) + tier subscription model (2026-10-23) — **9a APPLIED LIVE · 9b–9f pending · files uncommitted**
+
+**Status 2026-10-23 — 9a APPLIED LIVE (schema block only, human-authorized via the authenticated `database/query` path):**
+`stores` created + seeded (1 row, slug `flagship`, id `00000000-0000-0000-8333-000000000001`, tier `starter`), `store_id`
+added to `menu_items`/`categories`/`orders`/`staff_roster` (constant default = legacy id), `created_at` on `order_items`,
+`updated_at` on `menu_items`/`categories`, the 5 store indexes, and `ALTER TABLE stores ENABLE ROW LEVEL SECURITY`.
+**9a gate verified:** stores=1, orders 18/18 legacy, menu 15/15 legacy, categories 5/5 legacy, roster 3/3 legacy,
+order_items 38/38 carry `created_at`; anon `GET /rest/v1/menu_items` still HTTP 200 and now returns `store_id`. The
+existing `sql/03` policies are untouched, so the running single-store app is unchanged. **9b–9f are NOT yet done**
+(9b needs human-typed passwords; 9c needs the JWT signing secret + Edge Function; 9d/9e are file edits). The two
+files remain uncommitted. The human asked for a comprehensive architecture spec + step-by-step refactoring plan for
+multi-store + Tier 1 / Tier 2 gating on ONE Supabase instance. The deliverables:
+
+| Asked for | Delivered in |
+| --- | --- |
+| (1) the SQL migration file | `sql/08_multitenant.sql` (32,869 B / 623 lines) |
+| (2) frontend routing + auth architecture | `MULTI_TENANT_SPEC.md` §4 |
+| (3) feature-gating design | `MULTI_TENANT_SPEC.md` §2 (tier matrix) + §5 (per-function delta) |
+| (4) step-by-step safe-migration roadmap | `MULTI_TENANT_SPEC.md` §6 (9a→9f + 6-probe checklist) |
+
+§3 of the spec covers realtime + the 30-min unpaid-order expiry, which the human raised as a fourth concern.
+**The two files cross-reference each other's numbering — do not renumber either one.**
+
+**The design, in one paragraph.** The store axis is additive, not a rewrite: `sql/08` creates `stores` and gives
+every existing data table a `store_id uuid NOT NULL DEFAULT <legacy-store-uuid> REFERENCES stores (id) ON DELETE
+RESTRICT`. Because the default is a constant, every existing row lands in the legacy store with no data movement,
+no re-key, and no window where the current single-store app is broken. The legacy store is seeded with the fixed
+id literal **`00000000-0000-0000-8333-000000000001`** and slug **`flagship`** — that literal appears in four `ADD
+COLUMN` defaults plus the seed row, so if a second store is ever bootstrapped by hand, replace the literal
+**ONCE before the first paste**, never mid-file. `order_items` deliberately gets **no** `store_id`: it inherits the
+store through its `orders` FK, and a second copy of the axis there is a second thing that can drift out of sync.
+
+**The store travels in the JWT, not in a lookup.** `jwt_store_id()` reads `sid` (or `user_metadata.sid`) out of
+`request.jwt.claims` and UUID-guards it (garbage → NULL). It reads **no table at all**, on pain of recursion: a
+policy helper that SELECTed `staff_roster` would re-enter `roster_authenticated_read_*`, and Postgres does not
+allow a policy expression to read a table the caller is already being filtered by. Consequence: a staff member's
+store is asserted by the token that minted their session, so re-issuing identities with `data:{sid: <store-uuid>}`
+is step **9b**, not a cosmetic edit.
+
+**Tier is not self-serviceable.** Two UPDATE policies pin the tier — `stores_owner_update_starter` (USING
+`tier = 'starter'`) and `stores_owner_update_pro` (USING `tier = 'pro'`), each with the matching WITH CHECK — so an
+authenticated owner can edit name/city/timezone/`is_open` inside their own tier but can never flip `tier` itself;
+a tier change is a `service_role` (i.e. dashboard/CLI) action only. The 25-item Tier-1 cap is enforced in two
+layers: the policy helper `cap_allows(store_id)` in the WITH CHECK of `menu_items_staff_write_store`, and a copy of
+the same count inside `create_menu_item` returning `MENU_LIMIT_REACHED` (a policy refusal is an opaque HTTP 401-ish
+card; the function copy is what the owner page can render as prose). `tier_gate(store_id, need)` is the single
+backend boundary in front of `sales_summary` / `sales_report` / `turnover_stats`, and `starter_write_gate(...)` is
+the Tier-1 restriction on `update_menu_item` (availability toggles allowed, name/description/price edits refused
+with `TIER_REQUIRED`). Frontend gating is cosmetic by design — the backend refusal is the answer to "can I stop it",
+the UI hiding is only the answer to "will I see it".
+
+**Critical ordering trap — the anon store-scoped policies are Phase 9c, NOT 9a.** `menu_read_store_anon` /
+`categories_read_store_anon` require `jwt_store_id() IS NOT NULL`. If they are applied before the store token exists
+(step 9c mints it), every visitor's catalogue renders **empty** — the anon read is the whole menu page. Until 9c
+ships, keep 03's broad anon read (interim option **B** in spec §4.3): with one branch live it is safe, and the
+public-menu read is public data anyway. Option **A** (target) is an Edge Function minting a 5-minute HS256
+`{role:'anon', sid, exp}` — needs `SL_JWT_SECRET`, which must never enter the repo, the browser, or the model.
+Option **C** (an Auth identity per walk-in customer) is rejected: it burns a GoTrue user per visitor.
+
+**Gotchas recorded while writing the file (all still open, none fixed live).**
+- `code varchar(5)` is **globally UNIQUE** in `sql/01_schema.sql:74`. Two stores will collide on claim codes
+  immediately. The scoped fix — `ALTER TABLE orders DROP CONSTRAINT <generated-name>` then
+  `CREATE UNIQUE INDEX orders_store_code_idx ON orders (store_id, code)` — is documented in spec §1.4 but NOT in
+  `sql/08`, because the generated constraint name must be confirmed against the live DB before it is dropped.
+  Do this as its own verified step, not inside the 9a paste.
+- `stores` uses `text + CHECK IN ('starter','pro')`, not an ENUM. Enumerations are type-level, cannot be extended
+  without a rewrite, and would make a future Tier 3 a schema migration. Keep the CHECK.
+- There is **no `users` table** and there must not be one: GoTrue owns identities, `staff_roster` owns role/store,
+  and a third copy of either is a desync risk. `analytics_logs` is present in `sql/08` only as a commented block —
+  Tier-2 analytics today reads `orders`/`order_items` through the existing summary functions.
+- `purge_expired_orders_store(uuid)` and `purge_expired_orders_all()` are new because the existing cron Edge
+  Function calls the global sweep; renaming it would break the registered job. Both keep the physical `DELETE`
+  (the partial index `orders_store_live_idx (store_id, expires_at) WHERE status='pending_payment'` is what makes
+  the sweep cheap) — and **do not add a VIEW** for freshness: a view's read is subject to the view's own policies,
+  which is a silent RLS bypass trap. Freshness filtering belongs inside `list_active_pending()`'s body (step 9d).
+
+**Syntax traps hit while drafting `sql/08` (fixed in-file; do not reintroduce).** `INSERT (cols)` without `INTO
+stores`; a self-referential `CHECK (id <> id)`; `SELECT … FROM menu_items.columns` (not valid introspection);
+`DELETE o FROM orders AS o` (MySQL syntax, not PG) → `DELETE FROM orders AS o`; `WHERE o.id IN <jsonb array>`;
+locals named `before`/`after` (grammar-keyword collision) → `n_before`/`n_after`; `COUNT(<alias>)` on a scalar
+→ `COUNT(1)`. The file was rewritten rather than patched after these were found.
+
+**No local PostgreSQL parser exists on this box** (`Get-Command psql` → nothing; `node_modules/pgsql-parser` and
+`node_modules/sqlparser` → both absent). So `sql/08_multitenant.sql` is **hand-reviewed only** — its first live
+paste is the syntax gate, and multi-statement groups in the dashboard abort atomically on a parse error, which is
+what makes that paste safe. The schema block runs ONCE; a re-paste failing is the expected safe signal, not a defect.
+
+**Honest flags — deliberately NOT done this pass.**
+- **9a is now applied live** (schema block only, verified above); 9b–9f are not. `sql/08` and `MULTI_TENANT_SPEC.md`
+  are still uncommitted. The next human-authorized step is **9b** — re-issue the 3 staff identities with `data:{sid}`
+  (signup with the same email/password, or admin API with service role); passwords must be typed by the human, never
+  routed through the model.
+- `assets/api.js`, `assets/config.js` and the five pages are unchanged — no page knows about `?store=<slug>`, and
+  `assets/config.js` has no `storeSlug` key yet. That is step 9e, and it must not start before 9c exists.
+- `sql/03_rls.sql` still carries `USING ( true )` on every authenticated policy — the single-store assumption that
+  Phase 9c replaces. Until then, an authenticated staff member can technically read another store's rows; with one
+  store live that is unobservable, which is why it is a roadmap item and not a hotfix.
+- The realtime side is unchanged: isolation is already RLS-enforced per store, so the client filter strings
+  (`eq:orders.INSERT`) are bandwidth-only and must be re-verified live once a second branch exists.
+- Phase 8's open items (live cron, Vercel account/domain, manual phone run of Gate A) are untouched and still parked.
+
+**COMPLETENESS GAP — the 9d function delta is live-only, not in any repo file (verified 2026-10-23).** The 9d body edits
+(store-scope via `jwt_store_id()`, tier/cap gating via `tier_gate`/`starter_write_gate`/`cap_allows`, `create_order`
+`COALESCE(jwt_store_id(), legacy)`) were applied to the **live DB** (chunks 1–5, all 201) but are **not captured in a file**:
+`sql/02_functions.sql` on disk is still the **pre-9d** version (its `create_menu_item`/`update_menu_item` bodies use the
+email/`roster_role_of` owner fence, no `store_id` on INSERT, no cap/tier guards), and `sql/08` holds only the new helpers/routing,
+not the modified core bodies. **Hazard:** any future session that re-applies `sql/02_functions.sql` (`CREATE OR REPLACE`) silently
+**reverts** the store-scope/tier gating. **FIX — DONE 2026-10-23:** the delta is now captured in **`sql/09_function_delta.sql`**
+(14 idempotent `CREATE OR REPLACE` bodies: 12 from `sql/02` — `create_order`/`get_order_by_code`/`confirm_payment`/`add_claim_item`/
+`create_category`/`reorder_categories`/`delete_category`/`create_menu_item`/`update_menu_item`/`sales_summary`/`sales_report`/`turnover_stats`
+— plus `staff_session`/`roster_add` from `sql/07`; `sql/07` on disk was ALSO pre-9d for those two). Replay order is now
+**01→02→03→04→05→06→07→08→09**; 09 overrides 02/07 bodies with no signature change, so `api.js` call sites are untouched.
+`sql/09` is a **spec-faithful reconstruction** (originals verbatim + MULTI_TENANT_SPEC §5.2 edits), NOT a verbatim dump of the live
+bodies — treat it as authoritative for re-runs, but call-test it against a **second store** or a **real staff JWT** before trusting
+byte-for-byte equality with the live 9d state. **Verification limit:** with one store + interim option B the 9d
+bodies are behaviorally indistinguishable from the old ones (legacy default == the `COALESCE` fallback), and the role guards
+(`OWNER_SESSION_REQUIRED`/`STAFF_SESSION_REQUIRED`) are unchanged by 9d and fire before the store-scope code — so those return
+codes are **not** evidence of a live regression. Confirming the 9d bodies needs a **second store** or a **real staff JWT** (human login).
+
+---
+
+## 15. Phase 9g — SECOND STORE `marcelas` (2026-10-23) — **APPLIED LIVE + browser-verified, NOTHING committed**
+
+Human request: "make a another folder in this project … second store is Marcela's B&B Restaurant … get color pattern from this website … assign task to correct agents". This closes the "needs a second store" limit in §14: the **store axis is now observable for READ**.
+
+**The store row (live, verified):** `id 00000000-0000-0000-8333-000000000002` · `slug marcelas` · `name Marcela's B&B Restaurant` · `city Gamay, Northern Samar` · `timezone Asia/Manila` · `is_open true` · **`tier starter`** (deliberate — flagship is `pro`, so the tier axis stays observable and the seeded catalogue stays under the 25-item cap).
+
+**Counts, verbatim from the live DB:** `flagship | pro | 5 | 15` and `marcelas | starter | 4 | 10`. Note the **15 vs 14**: flagship holds 15 `menu_items` rows but `menu_for_store` returns **14** — one row is `is_available=false`. That is not leakage; do not "fix" it.
+
+**Call-test proofs (publishable key, public surface):** `resolve_store {"p_slug":"marcelas"}` → `success:true` with `tier:"starter"`; `menu_for_store {…0002}` → exactly the 10 marcelas items, zero flagship ids; `categories_for_store {…0002}` → the 4 marcelas categories; flagship calls still 14/5. Envelope `{success,data,error}` on all.
+
+**Files (all uncommitted):** `sql/10_marcelas_store.sql` (9,193 B — INSERT-only, `ON CONFLICT (id) DO NOTHING`, fixed UUID space categories `3333…`/items `4444…`, `store_id` passed **explicitly** on all 14 rows) · `stores/marcelas/README.md` · `stores/marcelas/tokens.css`. **Replay order is now 01→02→03→04→05→06→07→08→09→10.**
+
+**THEMING ARCHITECTURE — the trap that cost the most this pass.** There are **two** theming layers and a store theme must cover **both**: `assets/app.css` reads `var(--brand-*)` **at runtime** (a custom-property override cascades), but `assets/tailwind.compiled.css` is a **build artifact with literal hex baked in** (`tools/tailwind.config.js` `readFileSync`s `assets/tokens.css` and resolves `token()`→hex at build time). Proof from the browser: with only the custom properties, `.text-brand-accent` stayed `rgb(212 141 55)`. `stores/marcelas/tokens.css` therefore **hand-mirrors all 27 compiled `brand-*` rules** (plus the `::-moz-selection` twins), each prefixed `[data-sl-store="marcelas"]`, `--tw-*` plumbing byte-identical, **no `!important`** — specificity does the work. The **same baked-literal problem applies to fonts**: `.font-serif` is baked as `font-family:Playfair Display,serif`, so `--font-serif` alone never repaints it; block 3 mirrors `.font-serif{font-family:Cinzel,serif}`. There is **no `.font-sans` rule in the artifact** — the body face reaches up through `app.css`'s `var(--font-sans)`, which block 1 already covers.
+
+**Palette (from Marcela's own website, inline Tailwind config):** `gold 400 #E6C65A / 500 #D4AF37 / 600 #B89028 / 700 #8C6A15`, `resort dark #0F172A / cream #FAF9F6`, fonts `Cinzel` + `Plus Jakarta Sans` → mapped onto the **existing** token names (no new token names): dark `#0f172a`, card `#1e293b`, card-hover `#334155`, accent `#d4af37`, accent-light `#e6c65a`, cream `#faf9f6`, muted `#94a3b8`, border `#8c6a15` (gold-700 — reads as a hairline gold rule at the `/40`–`/60` opacities the pages already use).
+
+**`menu.html` wiring (4 surgical edits, flagship byte-stable):** Google Fonts extended with `Cinzel` + `Plus Jakarta Sans` (Inter/Playfair untouched) · `<link rel="stylesheet" href="stores/marcelas/tokens.css">` after the compiled artifact (safe unconditionally — every rule is scoped) · a **classic non-module `<script>` in `<head>`** stamping `data-sl-store` from `?store=` before the module runs (no first-paint flash) · `<h1 data-branch-title>` + `<span data-branch-name>` ×2 in the footer, rewritten by `applyBranchTitle()` **only when `slug !== 'flagship'`**, via `textContent` (the store name is DB data — never parsed as markup).
+
+**Browser proof (local static server, working tree):** `?store=marcelas` → `data-sl-store=marcelas`, body `rgb(15,23,42)`, `--brand-accent #d4af37`, `.text-brand-accent` computed `rgb(212,175,55)`, `.bg-brand-card/60` `rgba(30,41,59,.6)`, `.border-brand-border/60` `rgba(140,106,21,.6)`, h1 `Cinzel` + `MARCELA'S B&B RESTAURANT`, body `Plus Jakarta Sans`, footer `Marcela's B&B Restaurant` ×2, 4 categories + marcelas items. `menu.html` (no param) and `?store=flagship` → flagship palette byte-identical (`rgb(20,12,8)`, `#d48d37`, `rgb(212,141,55)`, Playfair/Inter, `SLEEPLESS CAFE`, 5 categories). `?store=ghost` → flagship palette retained + "That branch isn't open right now."
+
+**STILL OPEN — state these honestly, they are capability gates, not bugs:**
+1. **An order placed from `menu.html?store=marcelas` lands in flagship.** Interim option B keeps the broad anon read, and an anon customer carries no `sid`, so `create_order` `COALESCE`s to the legacy uuid. Closing this needs the store-bearing anon token (§4.3-A, Edge-Function-minted, needs `SL_JWT_SECRET`).
+2. **No `marcelas` staff identity exists.** A staff/owner JWT for the second branch needs a human-created auth user (bcrypt password typed by the human) — the DB-query path cannot mint one.
+3. **Claim-code collision hazard:** `code varchar(5)` is **globally UNIQUE** (`sql/01_schema.sql:74`) and `create_order` draws codes without per-store scoping. Two live branches will eventually collide; the 23505 retry loop re-draws, so it degrades silently rather than failing. The scoped fix (`DROP CONSTRAINT` + `CREATE UNIQUE INDEX orders_store_code_idx ON orders (store_id, code)`) is in `MULTI_TENANT_SPEC.md` §1.4 and is **deliberately not applied** — it needs the generated constraint name confirmed against the live DB.
+4. `assets/tokens.css` stays flagship's single source of truth; `stores/marcelas/tokens.css` is a **hand-mirrored copy of the build artifact**, so a future `tailwind.compiled.css` rebuild must be re-mirrored (durable fix: a second Tailwind build with the store tokens).
+5. Cron/Vercel (Phase 8 / 9f) still parked. **Nothing committed.**

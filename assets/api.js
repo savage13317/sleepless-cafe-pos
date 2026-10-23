@@ -201,6 +201,22 @@ export async function getCategories() {
   return await getRows('categories?select=id,name,display_order&order=display_order.asc');
 }
 
+/* --- Phase 9 store routing (anon-callable RPCs, store-scoped) -------------
+   resolve_store(slug) -> {id,slug,name,tier,is_open} or STORE_NOT_FOUND.
+   menu_for_store / categories_for_store read ONE branch's catalogue; they
+   filter is_available server-side, so their rows carry no is_available field. */
+export async function resolveStore(slug) {
+  return await callSql('resolve_store', { p_slug: slug });
+}
+
+export async function menuForStore(storeId) {
+  return await callSql('menu_for_store', { p_store_id: storeId });
+}
+
+export async function categoriesForStore(storeId) {
+  return await callSql('categories_for_store', { p_store_id: storeId });
+}
+
 /* --- owner surface (Phase 5): same envelope, session bearer required ------
    The SQL layer (sql/02_functions.sql) gates these on the caller's JWT claims,
    so without signIn()+setSessionToken() first every one of these returns the

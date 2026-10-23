@@ -29,4 +29,9 @@ export const CONFIG = {
   sbKey: (window.SL_CONFIG?.sbKey) || _LS?.sbKey || 'sb_publishable_krQEeT-v7feHLYl01f8zsw_to9JjsAD',
   ownerEmails: ((window.SL_CONFIG?.ownerEmails || _LS?.ownerEmails || '').split(',')).filter(Boolean),
   ttlMinutes: 30,
+  // Phase 9 multi-tenant: which branch this visitor is on. Resolution priority
+  // matches the others (window override -> localStorage -> committed default).
+  // 'flagship' is the legacy single-branch slug, so the existing public host
+  // (no ?store= param) keeps working unchanged.
+  storeSlug: (window.SL_CONFIG?.storeSlug) || _LS?.storeSlug || 'flagship',
 };

@@ -175,6 +175,11 @@
         INVALID_DISPLAY_NAME: "That display name is empty or over 60 characters — keep it short.",
         INVALID_ROLE: "That station isn't one the roster knows — pick cashier or kitchen.",
         LAST_OWNER_ONLY: "That's the only active owner — promote another staff member to owner before demoting this one.",
+        /* --- Phase 9 tier + store codes (sql/08) ---------------------------- */
+        TIER_REQUIRED: "This branch is on the Starter plan — cashier and kitchen staff, and new menu items, need a Pro branch.",
+        MENU_LIMIT_REACHED: "This branch has reached its Starter menu limit — upgrade to Pro to keep adding items.",
+        STORE_CONTEXT_REQUIRED: "This owner session carries no branch — sign in again from the branch you manage.",
+        STORE_MISMATCH: "This owner's roster branch doesn't match its store token — sign in from the branch you manage.",
         NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
         HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening tell the manager.",
     };
@@ -900,11 +905,18 @@
        attempted — a half-paired employee cannot exist. (The reverse orphan —
        signup ok, roster_add refused — leaves an auth identity with no roster
        row, which is inert: login.html and staff_session both refuse it.) */
+    /* Phase 9: this branch's plan tier, read from staff_session() at boot.
+       Starter branches cannot add cashier/kitchen staff — gate BEFORE signup so
+       no orphan auth identity is created. Tier is never self-served (sql/08). */
+    let ownerTier = '';
     async function doAddEmployee() {
         const name = (document.querySelector('[data-add-emp-name]')?.value ?? '').trim();
         const email = (document.querySelector('[data-add-emp-email]')?.value ?? '').trim();
         const role = (pick.get('add-emp-role') ?? 'Cashier') === 'Kitchen' ? 'kitchen' : 'cashier';
         if (!name || !email) { say('Type a display name and an email first.'); return paint(); }
+        if (role !== 'owner' && ownerTier !== 'pro') {
+            say(ERR_COPY.TIER_REQUIRED); return paint();
+        }
         const pwRes = await newMemorablePassword();
         if (!pwRes.success) { say(copyFor(pwRes.error?.code ?? 'HTTP')); return paint(); }
         const pw = String(pwRes.data ?? '');
@@ -1045,6 +1057,7 @@
         const me = ss.data || {};
         const active = me.active === true || String(me.active) === 'true';
         if (String(me.role ?? '') !== 'owner' || !active) { renderGate(NOT_OWNER_STATION); return; }
+        ownerTier = String(me.tier ?? '');   // Phase 9: plan tier drives tier-locked actions
 
         /* LEGACY, superseded by sql/07 roster_role_of — kept as a note, not deleted
            silently: the CONFIG.ownerEmails browser allowlist used to be the whole

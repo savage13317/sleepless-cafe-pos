@@ -1,0 +1,115 @@
+/* ===========================================================================
+   stores/marcelas/tokens.css — STORE THEME FOR `marcelas` ONLY.
+   ---------------------------------------------------------------------------
+   Flagship's single source of truth stays assets/tokens.css and is NOT touched
+   by this file. Every rule below is scoped to [data-sl-store="marcelas"], the
+   attribute menu.html stamps on <html> from ?store=, so this file can never
+   repaint flagship: loaded on menu.html with no ?store= (or ?store=flagship)
+   it matches nothing and is a strict no-op.
+
+   Palette taken from Marcela's own website (inline Tailwind config: gold
+   400/500/600/700 + resort dark/cream, fonts Cinzel + Plus Jakarta Sans),
+   mapped onto the SAME token names the project already uses — no new token
+   names are introduced anywhere.
+
+   TWO LAYERS, BOTH COVERED — see stores/marcelas/README.md:
+     1. assets/app.css consumes var(--brand-*) at runtime  -> block 1 wins.
+     2. assets/tailwind.compiled.css is a BUILD ARTIFACT with literal hex
+        baked in (tools/tailwind.config.js resolves token() -> hex at build
+        time), so a custom-property override does NOT reach those classes.
+        Block 2 re-declares them.
+   =========================================================================== */
+
+
+/* ---------------------------------------------------------------------------
+   BLOCK 1 — custom properties. Reaches every consumer that reads var(--brand-*),
+   i.e. assets/app.css and the inline styles in the pages.
+   :root[...] (0,2,0) beats the bare :root in assets/tokens.css (0,1,0).
+   --------------------------------------------------------------------------- */
+:root[data-sl-store="marcelas"] {
+  --brand-dark:         #0f172a;   /* resort.dark  — page background        */
+  --brand-card:         #1e293b;   /* slate-800    — card surface           */
+  --brand-card-hover:   #334155;   /* slate-700    — card hover surface     */
+  --brand-accent:       #d4af37;   /* gold.500     — primary accent         */
+  --brand-accent-light: #e6c65a;   /* gold.400     — light accent           */
+  --brand-cream:        #faf9f6;   /* resort.cream — body text              */
+  --brand-muted:        #94a3b8;   /* slate-400    — secondary text         */
+  --brand-border:       #8c6a15;   /* gold.700     — hairline borders       */
+
+  --font-sans:  'Plus Jakarta Sans', sans-serif;   /* website sans  */
+  --font-serif: 'Cinzel', serif;                   /* website cinzel */
+}
+
+
+/* ---------------------------------------------------------------------------
+   BLOCK 2 — the compiled-artifact override.
+
+   HAND-MIRRORED COPY of the 27 brand-* rules actually present in
+   assets/tailwind.compiled.css (extracted verbatim; the --tw-* plumbing is
+   byte-identical, only the color triples/hex are swapped to the marcelas
+   palette). Escaped selectors are kept exactly as Tailwind wrote them
+   (\/40, \:bg-brand-accent) and the ::-moz-selection twins are mirrored too.
+
+   The scope prefix is a DESCENDANT selector: every element in the page is a
+   descendant of <html>, which carries data-sl-store. Specificity goes up by
+   one attribute selector, so these win over the unscoped artifact rules with
+   no !important anywhere.
+
+   DURABLE FIX: a second Tailwind build run with these tokens (Phase-9
+   follow-up). Until that lands, any future rebuild of
+   assets/tailwind.compiled.css MUST be re-mirrored in this block — a new or
+   renamed brand-* rule added by the build has no override here and would
+   repaint marcelas in flagship's colors.
+   --------------------------------------------------------------------------- */
+
+/* border-* ---------------------------------------------------------------- */
+[data-sl-store="marcelas"] .border-brand-accent{--tw-border-opacity:1;border-color:rgb(212 175 55/var(--tw-border-opacity,1))}
+[data-sl-store="marcelas"] .border-brand-accent\/40{border-color:rgba(212,175,55,.4)}
+[data-sl-store="marcelas"] .border-brand-border{--tw-border-opacity:1;border-color:rgb(140 106 21/var(--tw-border-opacity,1))}
+[data-sl-store="marcelas"] .border-brand-border\/40{border-color:rgba(140,106,21,.4)}
+[data-sl-store="marcelas"] .border-brand-border\/60{border-color:rgba(140,106,21,.6)}
+
+/* bg-* -------------------------------------------------------------------- */
+[data-sl-store="marcelas"] .bg-brand-accent{--tw-bg-opacity:1;background-color:rgb(212 175 55/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .bg-brand-accent\/30{background-color:rgba(212,175,55,.3)}
+[data-sl-store="marcelas"] .bg-brand-card{--tw-bg-opacity:1;background-color:rgb(30 41 59/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .bg-brand-card\/40{background-color:rgba(30,41,59,.4)}
+[data-sl-store="marcelas"] .bg-brand-card\/60{background-color:rgba(30,41,59,.6)}
+[data-sl-store="marcelas"] .bg-brand-dark{--tw-bg-opacity:1;background-color:rgb(15 23 42/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .bg-brand-muted{--tw-bg-opacity:1;background-color:rgb(148 163 184/var(--tw-bg-opacity,1))}
+
+/* gradient stops ------------------------------------------------------------ */
+[data-sl-store="marcelas"] .from-brand-accent{--tw-gradient-from:#d4af37 var(--tw-gradient-from-position);--tw-gradient-to:rgba(212,175,55,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}
+[data-sl-store="marcelas"] .to-brand-dark{--tw-gradient-to:#0f172a var(--tw-gradient-to-position)}
+
+/* text-* ------------------------------------------------------------------ */
+[data-sl-store="marcelas"] .text-brand-accent{--tw-text-opacity:1;color:rgb(212 175 55/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .text-brand-accentLight{--tw-text-opacity:1;color:rgb(230 198 90/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .text-brand-cream{--tw-text-opacity:1;color:rgb(250 249 246/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .text-brand-muted{--tw-text-opacity:1;color:rgb(148 163 184/var(--tw-text-opacity,1))}
+
+/* outline ----------------------------------------------------------------- */
+[data-sl-store="marcelas"] .outline-brand-accentLight{outline-color:#e6c65a}
+
+/* selection (all four selector shapes the build emits, plus the -moz twins) - */
+[data-sl-store="marcelas"] .selection\:bg-brand-accent ::-moz-selection{--tw-bg-opacity:1;background-color:rgb(212 175 55/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .selection\:bg-brand-accent ::selection{--tw-bg-opacity:1;background-color:rgb(212 175 55/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .selection\:text-brand-dark ::-moz-selection{--tw-text-opacity:1;color:rgb(15 23 42/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .selection\:text-brand-dark ::selection{--tw-text-opacity:1;color:rgb(15 23 42/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .selection\:bg-brand-accent::-moz-selection{--tw-bg-opacity:1;background-color:rgb(212 175 55/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .selection\:bg-brand-accent::selection{--tw-bg-opacity:1;background-color:rgb(212 175 55/var(--tw-bg-opacity,1))}
+[data-sl-store="marcelas"] .selection\:text-brand-dark::-moz-selection{--tw-text-opacity:1;color:rgb(15 23 42/var(--tw-text-opacity,1))}
+[data-sl-store="marcelas"] .selection\:text-brand-dark::selection{--tw-text-opacity:1;color:rgb(15 23 42/var(--tw-text-opacity,1))}
+
+
+/* ---------------------------------------------------------------------------
+   BLOCK 3 — the font utilities have the SAME build-artifact problem as the
+   colors: assets/tailwind.compiled.css bakes .font-serif as
+   `font-family:Playfair Display,serif`, so --font-serif in block 1 never
+   repaints an element that carries the `font-serif` class. Mirrored here
+   exactly as the artifact writes it. There is no `.font-sans` rule in the
+   artifact - the page body picks the sans face up through app.css's
+   var(--font-sans), which block 1 already covers - so only .font-serif needs
+   mirroring. .font-mono stays flagship's: monospace is not part of this palette.
+   --------------------------------------------------------------------------- */
+[data-sl-store="marcelas"] .font-serif{font-family:Cinzel,serif}

@@ -11,10 +11,12 @@
     <!-- Tailwind utilities: compiled CSS (Phase B build; loads below, after app.css, to match the CDN's runtime injection order) -->
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Google Fonts: Inter & Playfair Display -->
+    <!-- Google Fonts: Inter & Playfair Display (flagship) + Cinzel & Plus Jakarta
+         Sans (marcelas store theme, stores/marcelas/tokens.css). Flagship's two
+         families stay exactly as they were. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&family=Cinzel:wght@400;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
          above app.css below, because app.css consumes the :root custom
@@ -28,6 +30,24 @@
 
     <!-- Tailwind utilities, compiled at build time from tools/tailwind.config.js, which READS assets/tokens.css — tokens.css stays the single source of truth; regenerate the artifact (node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m) whenever a token changes. Loaded HERE (after tokens.css + app.css) because the CDN injected its generated stylesheet at runtime, after every head link — same cascade. -->
     <link rel="stylesheet" href="assets/tailwind.compiled.css">
+
+    <!-- Store theme for marcelas ONLY. Safe to load unconditionally: every rule
+         in it is scoped to [data-sl-store="marcelas"], so on flagship it matches
+         nothing and is a strict no-op. It sits AFTER the compiled artifact because
+         that artifact has literal hex baked in and its brand-* utilities must be
+         outscoped, not merely overridden by custom properties. -->
+    <link rel="stylesheet" href="stores/marcelas/tokens.css">
+
+    <!-- Theme hook, stamped as early as possible so a branch page never flashes
+         flagship's palette. Classic (non-module) on purpose: it must run before
+         any module is fetched/evaluated. Flagship keeps its own attribute value,
+         which no store theme is scoped to, so flagship stays byte-identical. -->
+    <script>
+        (function () {
+            var s = new URLSearchParams(location.search).get('store');
+            document.documentElement.setAttribute('data-sl-store', s || 'flagship');
+        })();
+    </script>
 </head>
 
 <body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
@@ -38,7 +58,10 @@
         <div class="max-w-5xl w-full mx-auto px-4 py-2">
             <div class="flex items-center space-x-3">
                 <i class="fa-solid fa-mug-hot text-brand-accent text-2xl mr-2"></i>
-                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">SLEEPLESS CAFE</h1>
+                <!-- data-branch-title: the resolveBranch() flow rewrites THIS element's
+                     text for a non-flagship slug. The literal stays SLEEPLESS CAFE so
+                     flagship renders byte-identically and there is no first-paint flash. -->
+                <h1 data-branch-title class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">SLEEPLESS CAFE</h1>
             </div>
             <p class="text-brand-muted text-xs mt-1">Browse the menu — tap a category to start.</p>
         </div>
@@ -61,10 +84,10 @@
     <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
         <p class="text-brand-muted text-xs">
             <i class="fa-solid fa-mug-hot text-brand-accent mr-1"></i>
-            Sleepless Cafe · Prices in Philippine peso (₱)
+            <span data-branch-name>Sleepless Cafe</span> · Prices in Philippine peso (₱)
         </p>
         <p class="text-brand-muted text-xs">
-            © 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.
+            © 2026 <span data-branch-name>Sleepless Cafe</span> · All rights reserved · Powered by CapFam, Ltd.
         </p>
     </footer>
 
@@ -93,7 +116,7 @@
 </script>
 
 <script type="module">
-    import { getCategories, getMenu, createOrder, fmtPeso } from './assets/api.js';
+    import { resolveStore, menuForStore, categoriesForStore, createOrder, fmtPeso } from './assets/api.js';
     import { CONFIG } from './assets/config.js';
 
     /* --- state ----------------------------------------------------------- */
@@ -122,16 +145,60 @@
         CODE_EXHAUSTED: "We're out of claim codes right now — please try again in a few minutes.",
         NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
         HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening let the barista know.",
+        STORE_NOT_FOUND: "That branch isn't open right now. Try another location, or check back later.",
     };
+
+    /* --- store routing (Phase 9): resolve ?store= slug -> branch, cache ~60s --
+       Default slug is CONFIG.storeSlug ('flagship'), so the existing single-branch
+       public host works with no ?store= param. menu_for_store/categories_for_store
+       are store-scoped and filter is_available server-side (rows carry no is_available). */
+    let storeCtx = null;            // {slug, storeId, tier, name}
+    const STORE_TTL_MS = 60000;
+
+    async function resolveBranch() {
+        const q = new URLSearchParams(location.search);
+        const slug = q.get('store') || CONFIG.storeSlug || 'flagship';
+        let cached = null;
+        try { cached = JSON.parse(localStorage.getItem('sl_store') || 'null'); } catch { cached = null; }
+        if (cached && cached.slug === slug && (Date.now() - (cached.ts || 0)) < STORE_TTL_MS) {
+            storeCtx = { slug, storeId: cached.storeId, tier: cached.tier, name: cached.name };
+            applyBranchTitle(slug, cached.name);
+            return null;
+        }
+        const r = await resolveStore(slug);
+        if (!r.success) return r;
+        const d = r.data || {};
+        storeCtx = { slug, storeId: d.id, tier: d.tier, name: d.name };
+        localStorage.setItem('sl_store', JSON.stringify({ slug, storeId: d.id, tier: d.tier, name: d.name, ts: Date.now() }));
+        applyBranchTitle(slug, d.name);
+        return null;
+    }
+
+    /* --- branch wordmark ---------------------------------------------------
+       Only a non-flagship slug touches the wordmark, so flagship's markup stays
+       byte-identical. textContent, never innerHTML: the store name is DB data
+       and must never be parsed as markup.
+       ------------------------------------------------------------------- */
+    function applyBranchTitle(slug, name) {
+        if (slug === 'flagship') return;
+        const label = String(name || slug).trim();
+        if (!label) return;
+        const h1 = document.querySelector('[data-branch-title]');
+        if (h1) h1.textContent = label.toUpperCase();
+        /* footer wordmarks take the name as-is, not uppercased */
+        document.querySelectorAll('[data-branch-name]').forEach((el) => { el.textContent = label; });
+    }
 
     /* --- load catalogue -------------------------------------------------- */
     async function loadCatalogue() {
-        const [cRes, mRes] = await Promise.all([getCategories(), getMenu()]);
+        const rErr = await resolveBranch();
+        if (rErr) return rErr;
+        const [cRes, mRes] = await Promise.all([categoriesForStore(storeCtx.storeId), menuForStore(storeCtx.storeId)]);
         for (const r of [cRes, mRes]) {
             if (!r.success) return r;
         }
         categories = cRes.data || [];
-        menu = (mRes.data || []).filter((m) => m.is_available === true);
+        menu = (mRes.data || []).filter((m) => m.is_available !== false);
         return null;
     }
 
