@@ -1227,7 +1227,7 @@ codes are **not** evidence of a live regression. Confirming the 9d bodies needs 
 
 ---
 
-## 15. Phase 9g — SECOND STORE `marcelas` (2026-10-23) — **APPLIED LIVE + browser-verified, NOTHING committed**
+## 15. Phase 9g — SECOND STORE `marcelas` (2026-10-23) — **APPLIED LIVE + browser-verified + COMMITTED `a64ce1e`**
 
 Human request: "make a another folder in this project … second store is Marcela's B&B Restaurant … get color pattern from this website … assign task to correct agents". This closes the "needs a second store" limit in §14: the **store axis is now observable for READ**.
 
@@ -1252,4 +1252,6 @@ Human request: "make a another folder in this project … second store is Marcel
 2. **No `marcelas` staff identity exists.** A staff/owner JWT for the second branch needs a human-created auth user (bcrypt password typed by the human) — the DB-query path cannot mint one.
 3. **Claim-code collision hazard:** `code varchar(5)` is **globally UNIQUE** (`sql/01_schema.sql:74`) and `create_order` draws codes without per-store scoping. Two live branches will eventually collide; the 23505 retry loop re-draws, so it degrades silently rather than failing. The scoped fix (`DROP CONSTRAINT` + `CREATE UNIQUE INDEX orders_store_code_idx ON orders (store_id, code)`) is in `MULTI_TENANT_SPEC.md` §1.4 and is **deliberately not applied** — it needs the generated constraint name confirmed against the live DB.
 4. `assets/tokens.css` stays flagship's single source of truth; `stores/marcelas/tokens.css` is a **hand-mirrored copy of the build artifact**, so a future `tailwind.compiled.css` rebuild must be re-mirrored (durable fix: a second Tailwind build with the store tokens).
-5. Cron/Vercel (Phase 8 / 9f) still parked. **Nothing committed.**
+5. Cron/Vercel (Phase 8 / 9f) still parked.
+
+**COMMITTED + PUSHED 2026-10-23** (human "commit and push"): `a64ce1e` `feat(phase-9g)` — 11 files, +2217/−12; pushed `16bf529..a64ce1e`, **HEAD == origin/main == `a64ce1e`**, tree clean. Pre-commit secret scan: zero `sb_secret_`/`sk_`/`eyJ`-shaped strings repo-wide (only prose mentions and `sql/08` policy clauses `FOR INSERT TO service_role`, which are policy syntax, not keys). **Public GitHub Pages re-proved after the push** (Pages rebuilt ~1 min; an immediate 404 on the new CSS was rebuild lag, not a missing file): `menu.html?store=marcelas` → `data-sl-store=marcelas`, body `rgb(15,23,42)`, `--brand-accent #d4af37`, h1 `Cinzel` + `MARCELA'S B&B RESTAURANT`, body `Plus Jakarta Sans`, footer `Marcela's B&B Restaurant` ×2, 4 categories + marcelas items; `menu.html` (no param) → flagship byte-stable (`rgb(20,12,8)`, `#d48d37`, Playfair/Inter, `SLEEPLESS CAFE`, 5 categories).
