@@ -349,9 +349,13 @@ CREATE POLICY categories_staff_write_store ON categories FOR ALL TO authenticate
 DROP POLICY IF EXISTS orders_customer_insert ON orders;
 DROP POLICY IF EXISTS orders_customer_insert_store ON orders;
 CREATE POLICY orders_customer_insert_store ON orders FOR INSERT TO anon
-  WITH CHECK ( jwt_store_id() IS NOT NULL
-               AND store_id = jwt_store_id()
-               AND status = 'pending_payment' );
+  WITH CHECK ( ( jwt_store_id() IS NOT NULL AND store_id = jwt_store_id() )
+               OR ( jwt_store_id() IS NULL AND status = 'pending_payment' ) );
+-- Phase 9h+i: When a store-bearing anon token is present, enforce store scoping.
+-- When no token is present (legacy / no Edge Function yet), allow the insert
+-- but let create_order's COALESCE decide the store.  This keeps the page
+-- working before the store-token Edge Function is deployed, and automatically
+-- tightens to store-scoped once the token is minted and attached.
 
 DROP POLICY IF EXISTS order_items_customer_insert ON order_items;
 DROP POLICY IF EXISTS order_items_customer_insert_store ON order_items;

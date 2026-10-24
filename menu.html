@@ -116,7 +116,7 @@
 </script>
 
 <script type="module">
-    import { resolveStore, menuForStore, categoriesForStore, createOrder, fmtPeso } from './assets/api.js';
+    import { resolveStore, menuForStore, categoriesForStore, createOrder, fmtPeso, mintStoreToken, setAnonStoreToken } from './assets/api.js';
     import { CONFIG } from './assets/config.js';
 
     /* --- state ----------------------------------------------------------- */
@@ -151,7 +151,13 @@
     /* --- store routing (Phase 9): resolve ?store= slug -> branch, cache ~60s --
        Default slug is CONFIG.storeSlug ('flagship'), so the existing single-branch
        public host works with no ?store= param. menu_for_store/categories_for_store
-       are store-scoped and filter is_available server-side (rows carry no is_available). */
+       are store-scoped and filter is_available server-side (rows carry no is_available).
+
+       Phase 9h+i: after resolving the branch, mint a store-bearing anon JWT
+       via the store-token Edge Function.  The token is attached to createOrder()
+       so jwt_store_id() resolves to the correct store instead of COALESCEing
+       to the legacy flagship UUID.  If the Edge Function is not yet deployed
+       the page degrades gracefully (fallback anon policy in sql/08).             */
     let storeCtx = null;            // {slug, storeId, tier, name}
     const STORE_TTL_MS = 60000;
 
@@ -171,6 +177,16 @@
         storeCtx = { slug, storeId: d.id, tier: d.tier, name: d.name };
         localStorage.setItem('sl_store', JSON.stringify({ slug, storeId: d.id, tier: d.tier, name: d.name, ts: Date.now() }));
         applyBranchTitle(slug, d.name);
+
+        /* Phase 9h+i: mint store-bearing anon token for createOrder().
+           Non-blocking — if the Edge Function is not deployed the page
+           degrades via the fallback anon policy in sql/08_multitenant.sql. */
+        void mintStoreToken(slug).then((tokenData) => {
+            if (tokenData) {
+                setAnonStoreToken(tokenData.token);
+            }
+        });
+
         return null;
     }
 

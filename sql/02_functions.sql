@@ -112,6 +112,7 @@ DECLARE
   cname text; row_el jsonb; mi_id text; sz text; qty_txt text; qty integer; menu_row jsonb;
   price numeric; resolved jsonb := '[]'::jsonb; total numeric := 0;
   new_order_id uuid; code_uuid uuid; new_code text; inserted boolean := false;
+  sid uuid;
 BEGIN
   cname := COALESCE(TRIM(customer_name), '');
   IF cname = '' OR LENGTH(cname) > 100 THEN
@@ -120,7 +121,9 @@ BEGIN
   IF jsonb_typeof(items) <> 'array' OR jsonb_array_length(items) = 0 THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEMS', 'message', 'items must be a non-empty array'));
   END IF;
-  -- resolve every line against the catalogue before anything is written
+  -- option B: anon customer has no sid -> legacy store; a store-bearing token wins
+  sid := COALESCE(jwt_store_id(), '00000000-0000-0000-8333-000000000001'::uuid);
+  -- resolve every line against the catalogue BEFORE anything is written, scoped to sid
   FOR idx IN 0 .. jsonb_array_length(items) - 1 LOOP
     row_el := items -> idx;
     IF jsonb_typeof(row_el) <> 'object' THEN
@@ -133,11 +136,10 @@ BEGIN
     END IF;
     qty := qty_txt::int;
     menu_row := (SELECT jsonb_build_object('name', m.name, 'sizes', m.sizes_and_prices)
-                 FROM menu_items AS m WHERE m.id::text = mi_id AND m.is_available = true);
+                 FROM menu_items AS m WHERE m.id::text = mi_id AND m.is_available = true AND m.store_id = sid);
     IF menu_row IS NULL THEN
       RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_UNAVAILABLE', 'message', 'that item is not on the menu right now'));
     END IF;
-    -- unit_price is server-authoritative: pulled from the item's own sizes_and_prices
     price := (SELECT (el ->> 'price')::numeric FROM jsonb_array_elements(menu_row -> 'sizes') AS el
               WHERE (el ->> 'size') = sz);
     IF price IS NULL THEN
@@ -149,15 +151,11 @@ BEGIN
   END LOOP;
 
   new_order_id := gen_random_uuid();
-  -- 5-digit code from gen_random_uuid() (CSPRNG-backed). On a UNIQUE violation
-  -- (SQLSTATE 23505) the implicit savepoint rolls back only the failed INSERT,
-  -- so the loop just draws another code - up to 12 tries.
   FOR attempt IN 1 .. 12 LOOP
     code_uuid := gen_random_uuid();
     new_code := lpad((('x' || SUBSTR(code_uuid::text, 1, 8))::bit(32)::bigint % 100000)::text, 5, '0');
     BEGIN
-      -- status and expires_at take the column defaults: pending_payment, now()+30min
-      INSERT INTO orders (id, code, customer_name, total_amount) VALUES (new_order_id, new_code, cname, total);
+      INSERT INTO orders (id, code, customer_name, total_amount, store_id) VALUES (new_order_id, new_code, cname, total, sid);
       inserted := true;
       EXIT;
     EXCEPTION WHEN SQLSTATE '23505' THEN NULL; -- code collision, draw another
@@ -166,7 +164,6 @@ BEGIN
   IF NOT inserted THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CODE_EXHAUSTED', 'message', 'no free code left, please retry'));
   END IF;
-  -- item_name / size snapshotted from menu_items at order time
   INSERT INTO order_items (order_id, menu_item_id, item_name, size, unit_price, quantity, subtotal)
     SELECT new_order_id, (e ->> 'menu_item_id')::uuid, e ->> 'item_name', e ->> 'size',
            (e ->> 'unit_price')::numeric, (e ->> 'quantity')::int, (e ->> 'subtotal')::numeric
@@ -234,15 +231,16 @@ DECLARE
   row_o jsonb;
   email text;
   role text;
+  sid uuid;
 BEGIN
-  -- station fence (roster): get_order_by_code runs for cashier, owner — sql/07 roster_role_of
   email := jwt_claims_email();
   role := roster_role_of(email);
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
   IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
   IF role NOT IN ('cashier', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier or owner')); END IF;
+  sid := jwt_store_id();
   open_id := (SELECT o.id FROM orders AS o
-              WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= now());
+              WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= now() AND o.store_id = sid);
   IF open_id IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'ORDER_NOT_FOUND', 'message', 'that order is not open any more'));
   END IF;
@@ -324,26 +322,26 @@ DECLARE
   row_o jsonb;
   email text;
   role text;
+  sid uuid;
 BEGIN
-  -- station fence (roster): confirm_payment runs for cashier, owner — sql/07 roster_role_of
   email := jwt_claims_email();
   role := roster_role_of(email);
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_SESSION_REQUIRED', 'message', 'this surface needs a signed-in staff session')); END IF;
   IF role = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this signed-in email is not on the active staff roster')); END IF;
   IF role NOT IN ('cashier', 'owner') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'WRONG_STATION', 'message', 'this surface runs for cashier or owner')); END IF;
+  sid := jwt_store_id();
   stamp := now();
   UPDATE orders AS o
     SET status = 'paid', paid_at = stamp
-    WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= stamp;
+    WHERE o.code = claim_code AND o.status = 'pending_payment' AND o.expires_at >= stamp AND o.store_id = sid;
 
-  -- paid_at = stamp identifies exactly the row this call transitioned
   row_o := (SELECT jsonb_build_object(
               'code', o.code, 'customer_name', o.customer_name,
               'status', o.status, 'total_amount', o.total_amount,
               'paid_at', o.paid_at,
               'items_count', COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id)))
            FROM orders AS o
-           WHERE o.code = claim_code AND o.status = 'paid' AND o.paid_at = stamp);
+           WHERE o.code = claim_code AND o.status = 'paid' AND o.paid_at = stamp AND o.store_id = sid);
 
   IF row_o IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'ORDER_EXPIRED', 'message', 'This order''s time is up, please place a new one'));
@@ -588,8 +586,10 @@ BEGIN
   IF qty < 1 OR qty > 999 THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_QTY', 'message', 'quantity must be 1-999'));
   END IF;
+  -- the item must live in the SAME store as the claim it is being added to
   menu_row := (SELECT jsonb_build_object('name', m.name, 'sizes', m.sizes_and_prices)
-               FROM menu_items AS m WHERE m.id = p_menu_item_id AND m.is_available = true);
+               FROM menu_items AS m WHERE m.id = p_menu_item_id AND m.is_available = true
+               AND m.store_id = (SELECT o.store_id FROM orders AS o WHERE o.id = p_order_id));
   IF menu_row IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_UNAVAILABLE', 'message', 'that item is not on the menu right now'));
   END IF;
@@ -634,23 +634,27 @@ RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; fmt text;
   rev numeric := 0; cnt integer := 0; aov numeric := 0; buckets jsonb := '[]'::jsonb;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
+  IF tier_gate(sid, 'pro') <> 'OK' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'TIER_REQUIRED', 'message', 'sales analytics are a pro-plan feature')); END IF;
   IF grain NOT IN ('daily', 'monthly', 'yearly') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_GRAIN', 'message', 'grain must be daily, monthly or yearly')); END IF;
   fmt := CASE grain WHEN 'yearly' THEN 'YYYY' WHEN 'monthly' THEN 'YYYY-MM' ELSE 'YYYY-MM-DD' END;
-  -- completed sales ONLY: status 'served', paid inside the window
-  rev := COALESCE((SELECT SUM(o.total_amount) FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
-  cnt := COALESCE((SELECT COUNT(*) FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
+  -- completed sales ONLY: status 'served', paid inside the window, scoped to caller's store
+  rev := COALESCE((SELECT SUM(o.total_amount) FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
+  cnt := COALESCE((SELECT COUNT(*) FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
   aov := CASE WHEN cnt > 0 THEN ROUND(rev / cnt, 2) ELSE 0 END;
   -- FIX: the sort clause lives INSIDE jsonb_agg. A subquery ORDER BY feeding an aggregate
   -- is not guaranteed by PostgreSQL, so bucket order must be stated where it is honoured.
   buckets := COALESCE((SELECT jsonb_agg(jsonb_build_object('label', b.label, 'revenue', b.rev, 'count', b.cnt) ORDER BY b.label ASC)
                         FROM (SELECT to_char(o.paid_at, fmt) AS label, SUM(o.total_amount) AS rev, COUNT(*) AS cnt
-                              FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time
+                              FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time
                               GROUP BY to_char(o.paid_at, fmt)) AS b),
                       '[]'::jsonb);
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('revenue', rev, 'completed_count', cnt, 'aov', aov, 'grain', grain, 'buckets', buckets), 'error', NULL);
@@ -679,12 +683,16 @@ RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; fmt text;
   rows jsonb := '[]'::jsonb;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'this report needs a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this report needs an active owner on the staff roster')); END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
+  IF tier_gate(sid, 'pro') <> 'OK' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'TIER_REQUIRED', 'message', 'sales reports are a pro-plan feature')); END IF;
   IF grain NOT IN ('daily', 'monthly', 'yearly') THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_GRAIN', 'message', 'grain must be daily, monthly or yearly')); END IF;
   -- fmt drives the ELSE branch ONLY, and it is one level FINER than the grain the
   -- page asked for: 'monthly' rows are days, 'yearly' rows are months. That is what
@@ -708,7 +716,7 @@ BEGIN
                     FROM order_items AS oi WHERE oi.order_id = o.id), '[]'::jsonb))
                 ORDER BY o.paid_at ASC)
               FROM orders AS o
-              WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), '[]'::jsonb);
+              WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time), '[]'::jsonb);
   ELSE
     -- monthly / yearly: per-day or per-month totals. The inner SELECT resolves
     -- each order's cups ONCE (a correlated scalar subquery cannot sit in a
@@ -722,7 +730,7 @@ BEGIN
                           COALESCE((SELECT SUM(oi.quantity) FROM order_items AS oi WHERE oi.order_id = o.id), 0) AS cups,
                           o.total_amount AS cash
                           FROM orders AS o
-                          WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time) AS s
+                          WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time) AS s
                     GROUP BY s.label) AS g),
             '[]'::jsonb);
   END IF;
@@ -738,25 +746,29 @@ RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; cnt integer := 0;
   avg_s integer := 0; p95_s integer := 0; peak_hours jsonb := '[]'::jsonb;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
-  cnt := COALESCE((SELECT COUNT(*) FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
-  avg_s := COALESCE((SELECT AVG(o.fulfillment_time_seconds)::int FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
+  IF tier_gate(sid, 'pro') <> 'OK' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'TIER_REQUIRED', 'message', 'turnover analytics are a pro-plan feature')); END IF;
+  cnt := COALESCE((SELECT COUNT(*) FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
+  avg_s := COALESCE((SELECT AVG(o.fulfillment_time_seconds)::int FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time), 0);
   -- p95 by position: sort the durations, skip FLOOR(count*0.95) rows, take the next one.
   -- FLOOR matters: with ::int alone, 10 samples gives OFFSET 10 (9.5 rounds up) and the
   -- LIMIT 1 finds nothing, so p95 would read 0. FLOOR keeps the index inside the range.
   p95_s := COALESCE((SELECT o.fulfillment_time_seconds FROM orders AS o
-                     WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time
+                     WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time
                      ORDER BY o.fulfillment_time_seconds ASC OFFSET FLOOR(cnt * 0.95)::int LIMIT 1), 0);
   -- FIX: same reason as sales_summary - the sort belongs inside jsonb_agg, not on the
   -- subquery, so the heatmap reads left to right by hour by contract.
   peak_hours := COALESCE((SELECT jsonb_agg(jsonb_build_object('hour', t.hour, 'orders', t.orders) ORDER BY t.hour ASC)
                             FROM (SELECT EXTRACT(HOUR FROM o.created_at)::int AS hour, COUNT(*) AS orders
-                                  FROM orders AS o WHERE o.status = 'served' AND o.paid_at >= from_time AND o.paid_at <= to_time
+                                  FROM orders AS o WHERE o.status = 'served' AND o.store_id = sid AND o.paid_at >= from_time AND o.paid_at <= to_time
                                   GROUP BY EXTRACT(HOUR FROM o.created_at)::int) AS t),
                           '[]'::jsonb);
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('sample_size', cnt, 'avg_fulfillment_seconds', avg_s, 'p95_fulfillment_seconds', p95_s, 'peak_hours', peak_hours), 'error', NULL);
@@ -769,15 +781,18 @@ CREATE OR REPLACE FUNCTION create_category (name text, display_order integer)
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; new_id uuid;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
   IF COALESCE(TRIM(name), '') = '' OR LENGTH(TRIM(name)) > 80 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_CATEGORY_NAME', 'message', 'category name must be 1-80 characters')); END IF;
   new_id := gen_random_uuid();
-  INSERT INTO categories (id, name, display_order) VALUES (new_id, TRIM(name), COALESCE(display_order, 0));
+  INSERT INTO categories (id, name, display_order, store_id, updated_at) VALUES (new_id, TRIM(name), COALESCE(display_order, 0), sid, now());
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('category_id', new_id), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
@@ -789,18 +804,21 @@ CREATE OR REPLACE FUNCTION reorder_categories (new_order jsonb)
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; raw text; target uuid; touched integer := 0;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
   IF jsonb_typeof(new_order) <> 'array' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ORDER', 'message', 'new_order must be an array of category uuids')); END IF;
   FOR idx IN 0 .. jsonb_array_length(new_order) - 1 LOOP
     raw := COALESCE(new_order ->> idx, '');
     IF raw !~ '^[0-9a-fA-F-]{36}$' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ORDER', 'message', 'every entry must be a category uuid')); END IF;
     target := raw::uuid;
-    UPDATE categories AS c SET display_order = idx WHERE c.id = target;
+    UPDATE categories AS c SET display_order = idx WHERE c.id = target AND c.store_id = sid;
     touched := touched + 1;
   END LOOP;
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('reordered', touched), 'error', NULL);
@@ -829,16 +847,19 @@ RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; cat jsonb; fb jsonb;
   moved integer := 0; blocked integer := 0;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
   -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
-  cat := (SELECT jsonb_build_object('category_id', c.id, 'name', c.name) FROM categories AS c WHERE c.id = p_category_id);
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
+  cat := (SELECT jsonb_build_object('category_id', c.id, 'name', c.name) FROM categories AS c WHERE c.id = p_category_id AND c.store_id = sid);
   IF cat IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CATEGORY_NOT_FOUND', 'message', 'that category is not on the menu')); END IF;
   IF p_fallback_category_id IS NOT NULL THEN
-    fb := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = p_fallback_category_id);
+    fb := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = p_fallback_category_id AND c.store_id = sid);
     IF fb IS NULL OR p_fallback_category_id = p_category_id THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_FALLBACK', 'message', 'fallback_category_id must be a different existing category')); END IF;
   END IF;
   moved := COALESCE((SELECT COUNT(*) FROM menu_items AS m WHERE m.category_id = p_category_id), 0);
@@ -850,6 +871,13 @@ BEGIN
     BEGIN
       DELETE FROM menu_items AS m WHERE m.category_id = p_category_id;
     EXCEPTION WHEN SQLSTATE '23503' THEN
+      RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_IN_USE', 'message', 'items in that category appear in past orders - move them to another category or hide them instead of deleting'));
+    END;
+  END IF;
+  DELETE FROM categories AS c WHERE c.id = p_category_id AND c.store_id = sid;
+  RETURN jsonb_build_object('success', true, 'data', cat || jsonb_build_object('items_moved', moved, 'items_deleted', CASE WHEN p_fallback_category_id IS NULL THEN moved ELSE 0 END, 'fallback_category_id', p_fallback_category_id), 'error', NULL);
+END;
+$$ LANGUAGE plpgsql;
       RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_IN_USE', 'message', 'items in that category appear in past orders - move them to another category or hide them instead of deleting'));
     END;
   END IF;
@@ -865,13 +893,15 @@ CREATE OR REPLACE FUNCTION create_menu_item (category_id uuid, name text, descri
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; cat jsonb; el jsonb; new_id uuid;
+  sid uuid;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
-  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
-  cat := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = category_id);
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
+  cat := (SELECT jsonb_build_object('found', true) FROM categories AS c WHERE c.id = category_id AND c.store_id = sid);
   IF cat IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'CATEGORY_NOT_FOUND', 'message', 'that category is not on the menu')); END IF;
   IF COALESCE(TRIM(name), '') = '' OR LENGTH(TRIM(name)) > 120 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEM_NAME', 'message', 'item name must be 1-120 characters')); END IF;
   IF jsonb_typeof(sizes_and_prices) <> 'array' OR jsonb_array_length(sizes_and_prices) < 1 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZES', 'message', 'sizes_and_prices must be a non-empty array')); END IF;
@@ -883,9 +913,12 @@ BEGIN
       RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZES', 'message', 'each entry needs a size and a numeric price'));
     END IF;
   END LOOP;
+  IF NOT cap_allows(sid) THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_LIMIT_REACHED', 'message', 'this branch is on the starter plan and has reached its menu limit'));
+  END IF;
   new_id := gen_random_uuid();
-  INSERT INTO menu_items (id, category_id, name, description, image_url, sizes_and_prices, is_available)
-    VALUES (new_id, category_id, TRIM(name), COALESCE(description, ''), COALESCE(image_url, ''), sizes_and_prices, COALESCE(is_available, true));
+  INSERT INTO menu_items (id, category_id, name, description, image_url, sizes_and_prices, is_available, store_id, updated_at)
+    VALUES (new_id, category_id, TRIM(name), COALESCE(description, ''), COALESCE(image_url, ''), sizes_and_prices, COALESCE(is_available, true), sid, now());
   RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('menu_item_id', new_id), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
@@ -897,19 +930,24 @@ CREATE OR REPLACE FUNCTION update_menu_item (p_menu_item_id uuid, p_name text DE
 RETURNS jsonb AS $$
 DECLARE
   claims jsonb; email text; current jsonb; patched jsonb;
+  sid uuid; gate text;
 BEGIN
   claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}');
   email := COALESCE(claims ->> 'email', '');
   IF email = '' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'OWNER_SESSION_REQUIRED', 'message', 'menu changes need a signed-in owner session')); END IF;
-  -- roster fence (sql/07): NOT_OWNER - a signed-in non-owner is refused here
   IF roster_role_of(email) <> 'owner' THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'this action needs an active owner on the staff roster')); END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own')); END IF;
   current := (SELECT jsonb_build_object('name', m.name, 'description', m.description, 'image_url', m.image_url,
                                         'sizes_and_prices', m.sizes_and_prices, 'is_available', m.is_available)
                FROM menu_items AS m WHERE m.id = p_menu_item_id);
   IF current IS NULL THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'MENU_ITEM_NOT_FOUND', 'message', 'that item is not on the menu')); END IF;
-  -- '' (or null) means "keep the current name", so the length CHECK only applies
-  -- when a name was actually supplied. Validating the blank default would make
-  -- every patch call fail.
+  -- tier boundary: starter_write_gate resolves the item's store and refuses content
+  -- edits (name/description/sizes/image) on a starter store.
+  gate := starter_write_gate(p_menu_item_id, p_name, p_description, p_sizes_and_prices, p_image_url);
+  IF gate = 'TIER_REQUIRED' THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'TIER_REQUIRED', 'message', 'this branch is on the starter plan - only availability can be changed here'));
+  END IF;
   IF NULLIF(TRIM(COALESCE(p_name, '')), '') IS NOT NULL
      AND LENGTH(TRIM(p_name)) > 120 THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ITEM_NAME', 'message', 'item name must be 1-120 characters')); END IF;
   IF p_sizes_and_prices IS NOT NULL AND (jsonb_typeof(p_sizes_and_prices) <> 'array' OR jsonb_array_length(p_sizes_and_prices) < 1) THEN RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_SIZES', 'message', 'sizes_and_prices must be a non-empty array or null to keep')); END IF;
@@ -918,7 +956,8 @@ BEGIN
         description = CASE WHEN COALESCE(p_description, '') = '' THEN m.description ELSE p_description END,
         image_url = CASE WHEN COALESCE(p_image_url, '') = '' THEN m.image_url ELSE p_image_url END,
         sizes_and_prices = COALESCE(p_sizes_and_prices, m.sizes_and_prices),
-        is_available = COALESCE(p_is_available, m.is_available)
+        is_available = COALESCE(p_is_available, m.is_available),
+        updated_at = now()
     WHERE m.id = p_menu_item_id;
   patched := (SELECT jsonb_build_object('menu_item_id', m.id, 'category_id', m.category_id, 'name', m.name,
                                         'description', m.description, 'image_url', m.image_url,

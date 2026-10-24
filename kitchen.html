@@ -92,7 +92,7 @@
 </script>
 
 <script type="module">
-    import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtTime, fmtCountdown } from './assets/api.js';
+    import { signIn, setSessionToken, kitchenQueue, markServed, setPreparing, fmtTime, fmtCountdown, staffSession } from './assets/api.js';
     /* `mode` is a live binding: reading it inside a function sees realtime.js'
        later updates, so the header dot follows a socket that dies mid-service. */
     import { startWatching, stopWatching, mode as realtimeMode } from './assets/realtime.js';
@@ -102,6 +102,7 @@
     let boardError = null;      // error code from the last queue read
     let toast = null;           // {msg, until} — transient success line
     let staffEmail = null;      // email of the signed-in staff session
+    let storeId = null;         // Phase 9k: caller's store_uuid for realtime filtering
     let watching = false;       // so a realtime event never races a manual read
 
     /* Codes are STRINGS end-to-end: leading zeros are significant, so a code is
@@ -325,6 +326,16 @@
         /* only the email is surfaced — the password is never rendered */
         document.getElementById('staffid').textContent = staffEmail;
 
+        /* Phase 9k: resolve the caller's store_id so the realtime channel
+           can be scoped per-store.  Non-blocking — if staffSession fails the
+           board still works on polling with RLS-gated store isolation.       */
+        try {
+            const ss = await staffSession();
+            if (ss?.success && ss?.data?.store_id) {
+                storeId = ss.data.store_id;
+            }
+        } catch { /* staffSession not available, fall back to RLS-only */ }
+
         watching = true;
         await refreshQueue();
         paint();
@@ -333,7 +344,7 @@
            paint — handing it a bare read (refreshQueue alone) would update `rows`
            behind a board that never repaints. The socket callback is the same
            function, so a dropped socket gives an identical-looking board. */
-        await startWatching(repaint, repaint);
+        await startWatching(repaint, repaint, storeId);
         /* one 1 s tick: repaint from the cached rows (no network read) so the
            elapsed counter ticks up between realtime events, and re-read the
            live `mode` binding so the dot follows a socket that dies mid-service.

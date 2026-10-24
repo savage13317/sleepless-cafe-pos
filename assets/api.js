@@ -21,6 +21,50 @@ const HEADERS = {
 };
 let SESSION = null;               // staff bearer or null (anon)
 
+/* --- store-bearing anon token (Phase 9h+i) --------------------------------
+   STORE_TOKEN caches the JWT minted by the store-token Edge Function.
+   It is scoped per-slug so switching ?store= between flagship and marcelas
+   gives each its own token.  TTL is 4 min 30 s (Edge Function mints 5 min);
+   we rotate early so the tail-end never hits a stale-expiry race.           */
+let STORE_TOKEN = null;               // { slug, token, expiresAt }
+const STORE_TTL_MS = 270000;          // 4 min 30 s
+
+export function getStoreToken(slug) {
+  if (!STORE_TOKEN || STORE_TOKEN.slug !== slug || Date.now() > STORE_TOKEN.expiresAt) {
+    return null;
+  }
+  return STORE_TOKEN.token;
+}
+
+export async function mintStoreToken(slug) {
+  try {
+    const r = await fetch(`${CONFIG.sbUrl}/functions/v1/store-token?slug=${encodeURIComponent(slug)}`, {
+      method: 'POST',
+      headers: { apikey: CONFIG.sbKey, Authorization: `Bearer ${CONFIG.sbKey}` },
+    });
+    if (!r.ok) return null;
+    const body = await r.json();
+    if (body?.success && body?.data?.token) {
+      STORE_TOKEN = { slug, token: body.data.token, expiresAt: Date.now() + STORE_TTL_MS };
+      setAnonStoreToken(body.data.token);
+      return body.data;
+    }
+  } catch { /* Edge Function not deployed or network error */ }
+  return null;
+}
+
+/* setAnonStoreToken attaches a store-bearing JWT to the HEADERS used by
+   createOrder / callSql.  This is what menu.html calls after resolving the
+   branch slug so that jwt_store_id() inside create_order resolves to the
+   correct store instead of COALESCEing to the legacy flagship UUID.          */
+export function setAnonStoreToken(token) {
+  if (token) {
+    HEADERS.Authorization = `Bearer ${token}`;
+  } else {
+    HEADERS.Authorization = `Bearer ${CONFIG.sbKey}`;
+  }
+}
+
 /* --- staff session door ---------------------------------------------------
    RLS (sql/03_rls.sql) denies anon READ of orders / order_items on purpose, so
    a customer can never see another customer's claim. The cashier, kitchen and

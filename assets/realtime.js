@@ -90,7 +90,7 @@ export function stopWatching() {
   if (h) h.close();
 }
 
-export async function startWatching(onEvent, poll) {
+export async function startWatching(onEvent, poll, storeId) {
   stopWatching();
   mode = 'poll';                     // pessimistic until the socket proves itself
 
@@ -169,14 +169,25 @@ export async function startWatching(onEvent, poll) {
        kitchen_queue()), but a throw inside it must never kill the socket. */
     const deliver = (payload) => { try { onEvent(payload); } catch { /* page owns copy */ } };
 
-    /* wait:true holds the SUBSCRIBED callback until the SERVER confirms the
-       subscription, and reports CHANNEL_ERROR on failure — so the ws/poll
-       decision is honest, never optimistic. */
+    /* Phase 9k: scope postgres_changes to the caller's store via a filter.
+       When storeId is provided, only order rows whose store_id matches are
+       delivered — this prevents kitchen boards from seeing other stores'
+       orders when multiple stores share the same Supabase project.          */
+    const changeSpec = {
+      event: 'ALL',                   // listen to INSERT + UPDATE for KDS
+      schema: 'public',
+      table: 'orders',
+    };
+    if (storeId) {
+      changeSpec.filter = `store_id=eq.${storeId}`;
+    }
+
+    /* the channel name is still shared (PostgREST handles scoping via the
+       filter + RLS), but each page only receives its own store's events. */
     ch = client.channel('orders-watch', {
       config: { postgres_changes_options: { wait: true } },
     });
-    ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, deliver);
-    ch.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, deliver);
+    ch.on('postgres_changes', changeSpec, deliver);
     _live = handle;                  // stopWatching() can tear this down now
 
     /* subscribe() is not itself awaitable for the join result, so wrap it: resolve

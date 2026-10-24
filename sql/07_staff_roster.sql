@@ -212,16 +212,15 @@ BEGIN
   IF claims_email = '' THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'no roster identity for this session - register the staff member first'));
   END IF;
-  row_r := (SELECT jsonb_build_object('email', r.email, 'display_name', r.display_name, 'role', r.role, 'active', r.active) FROM staff_roster AS r WHERE r.email = claims_email);
+  row_r := (SELECT jsonb_build_object('email', r.email, 'display_name', r.display_name, 'role', r.role, 'active', r.active, 'store_id', r.store_id, 'tier', store_tier_of(r.store_id)) FROM staff_roster AS r WHERE r.email = claims_email);
   IF row_r IS NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this email is not on the staff roster'));
   END IF;
   IF (row_r ->> 'active')::text <> 'true' THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STAFF_NOT_REGISTERED', 'message', 'this staff member is suspended'));
   END IF;
-  -- refresh presence, then re-read so the returned last_seen_at reflects now()
   UPDATE staff_roster AS r SET last_seen_at = now() WHERE r.email = claims_email;
-  row_r := (SELECT jsonb_build_object('email', r.email, 'display_name', r.display_name, 'role', r.role, 'active', r.active, 'last_seen_at', r.last_seen_at) FROM staff_roster AS r WHERE r.email = claims_email);
+  row_r := (SELECT jsonb_build_object('email', r.email, 'display_name', r.display_name, 'role', r.role, 'active', r.active, 'last_seen_at', r.last_seen_at, 'store_id', r.store_id, 'tier', store_tier_of(r.store_id)) FROM staff_roster AS r WHERE r.email = claims_email);
   RETURN jsonb_build_object('success', true, 'data', row_r, 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
@@ -264,8 +263,10 @@ RETURNS jsonb AS $$
 DECLARE
   claims_email text;
   caller_id uuid;
+  caller_store uuid;
   new_id uuid;
   dup jsonb;
+  sid uuid;
 BEGIN
   claims_email := jwt_claims_email();
   IF claims_email = '' THEN
@@ -273,6 +274,10 @@ BEGIN
   END IF;
   IF roster_role_of(claims_email) <> 'owner' THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'NOT_OWNER', 'message', 'only an active owner may add staff'));
+  END IF;
+  sid := jwt_store_id();
+  IF sid IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_CONTEXT_REQUIRED', 'message', 'this owner session carries no store - re-sign-in from the branch you own'));
   END IF;
   IF p_email IS NULL OR p_email !~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_EMAIL', 'message', 'email must be a valid email (format only)'));
@@ -283,15 +288,24 @@ BEGIN
   IF p_role NOT IN ('owner', 'cashier', 'kitchen') THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'INVALID_ROLE', 'message', 'role must be owner, cashier or kitchen'));
   END IF;
+  -- tier gate: cashier/kitchen stations are a pro-plan feature
+  IF p_role IN ('cashier', 'kitchen') AND tier_gate(sid, 'pro') <> 'OK' THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'TIER_REQUIRED', 'message', 'cashier and kitchen staff are a pro-plan feature'));
+  END IF;
   dup := (SELECT jsonb_build_object('found', true) FROM staff_roster AS r WHERE r.email = p_email);
   IF dup IS NOT NULL THEN
     RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'ROSTER_EXISTS', 'message', 'that email is already on the roster'));
   END IF;
   caller_id := (SELECT r.id FROM staff_roster AS r WHERE r.email = claims_email);
+  caller_store := (SELECT r.store_id FROM staff_roster AS r WHERE r.email = claims_email);
+  -- cross-check: the owner's own store must match the session's store axis
+  IF caller_store IS NOT NULL AND caller_store <> sid THEN
+    RETURN jsonb_build_object('success', false, 'data', NULL, 'error', jsonb_build_object('code', 'STORE_MISMATCH', 'message', 'this owner belongs to a different branch than the session store'));
+  END IF;
   new_id := gen_random_uuid();
-  INSERT INTO staff_roster (id, email, display_name, role, active, added_by)
-    VALUES (new_id, p_email, TRIM(p_display_name), p_role, true, caller_id);
-  RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('roster_id', new_id, 'email', p_email, 'display_name', TRIM(p_display_name), 'role', p_role, 'created_password', p_created_password, 'note', 'copy this password to the new employee; it is shown once and never stored'), 'error', NULL);
+  INSERT INTO staff_roster (id, email, display_name, role, active, added_by, store_id)
+    VALUES (new_id, p_email, TRIM(p_display_name), p_role, true, caller_id, sid);
+  RETURN jsonb_build_object('success', true, 'data', jsonb_build_object('roster_id', new_id, 'email', p_email, 'display_name', TRIM(p_display_name), 'role', p_role, 'store_id', sid, 'created_password', p_created_password, 'note', 'copy this password to the new employee; it is shown once and never stored'), 'error', NULL);
 END;
 $$ LANGUAGE plpgsql;
 
