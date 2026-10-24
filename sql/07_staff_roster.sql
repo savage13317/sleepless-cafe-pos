@@ -144,12 +144,15 @@ $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION roster_role_of (p_email text)
 RETURNS text AS $$
+  /* SECURITY DEFINER — bypasses RLS so kitchen_queue / cashier_queue / staff_session
+     can look up staff membership even when the caller's JWT has no store_id and
+     the authenticated RLS policy would otherwise return zero rows. */
 BEGIN
   -- active rows only: an inactive roster row resolves to no role, so a suspended
   -- identity can never satisfy an owner gate.
   RETURN COALESCE((SELECT r.role FROM staff_roster AS r WHERE r.email = p_email AND r.active = true), '');
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION cap_word (p_word text)
 RETURNS text AS $$

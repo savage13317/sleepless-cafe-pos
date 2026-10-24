@@ -95,6 +95,7 @@
     const AUTH_COPY = "Those credentials were not accepted.";
     const NET_COPY = "We can't reach the cafe right now. Check your connection and try again.";
     const NOT_ON_ROSTER = "This email is not on the staff roster — ask the owner to register you.";
+    const WRONG_STORE = "This account belongs to a different store — use the correct login page.";
     /* login is role-agnostic, so these two cannot fire from staff_session() here;
        the copy stays honest in case the envelope ever carries them. */
     const SESSION_COPY = "The session could not be established — sign in again.";
@@ -162,7 +163,14 @@
             return { ok: false, copy };
         }
 
-        const role = (ss.data || {}).role;
+        const data = ss.data || {};
+        const role = data.role;
+
+        // STORE ISOLATION: Verify this user belongs to flagship store
+        if (data.store_id !== '00000000-0000-0000-8333-000000000001') {
+            return { ok: false, copy: WRONG_STORE };
+        }
+
         const target = role === 'cashier' ? 'cashier.html'
             : role === 'kitchen' ? 'kitchen.html'
             : role === 'owner' ? 'owner.html' : null;

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Marcelas B&B Restaurant | Staff Sign-in</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens for Marcelas -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+    <link rel="stylesheet" href="assets/tailwind.compiled.css">
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: Marcelas branding -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-utensils text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">MARCELAS B&B RESTAURANT</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Staff door · type your email and password, then tap Sign in
+            </p>
+        </div>
+    </header>
+
+    <!-- The form / result card lives here; the module repaints it. -->
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-utensils text-brand-accent mr-1"></i>
+            Marcelas B&B Restaurant · Staff door · signed in as <span id="staffid" class="font-mono text-brand-cream">nobody</span>
+        </p>
+    </footer>
+
+<script>
+    /* --- config bootstrap: force storeSlug to marcelas ------------------- */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        cfg.storeSlug = 'marcelas';  // FORCE marcelas store
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
+<script type="module">
+    import { signIn, setSessionToken, staffSession } from './assets/api.js';
+
+    const AUTH_COPY = "Those credentials were not accepted.";
+    const NET_COPY = "We can't reach Marcelas right now. Check your connection and try again.";
+    const NOT_ON_ROSTER = "This email is not on the Marcelas staff roster — ask the owner to register you.";
+    const WRONG_STORE = "This account belongs to a different store — use the Marcelas login page.";
+    const SESSION_COPY = "The session could not be established — sign in again.";
+    const STATION_COPY = "Your station will open once you sign in — this door is role-agnostic.";
+    const UNKNOWN_COPY = "Your role isn't a station this door knows — sign in again.";
+    const NEED_BOTH = "Type your email and password, then tap Sign in.";
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    function renderCard(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 my-6 mx-auto max-w-md flex flex-col gap-3">
+               <p class="text-brand-accentLight text-sm font-semibold">${esc(copy)}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing opens until a staff session exists — orders are invisible to anonymous visitors.</p>
+             </div>`;
+    }
+
+    function openForm() {
+        const app = document.getElementById('app');
+        app.innerHTML =
+            `<div class="glass-card rounded-xl p-6 my-6 mx-auto max-w-md flex flex-col gap-3">
+               <p class="text-brand-accent text-xs uppercase tracking-wider mb-1">Marcelas staff sign-in</p>
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Email</label>
+               <input type="text" placeholder="you@marcelas.example" spellcheck="false" autocomplete="off"
+                      class="rounded-lg p-3 py-2 min-h-[48px] text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-border"
+                      data-email-input>
+               <label class="text-brand-muted text-xs uppercase tracking-wider mt-2">Password</label>
+               <input type="text" placeholder="password" spellcheck="false" autocomplete="off"
+                      class="rounded-lg p-3 py-2 min-h-[48px] text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-border"
+                      data-pass-input>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-3 w-full" data-signin>Sign in</button>
+               <p class="text-brand-muted text-xs mt-3">You'll land on your station:
+                   <span class="text-brand-cream"><i class="fa-solid fa-utensils text-brand-accent mr-1"></i>Kitchen</span> ·
+                   <span class="text-brand-cream"><i class="fa-solid fa-user text-brand-accent mr-1"></i>Owner</span>
+               </p>
+             </div>`;
+    }
+
+    async function attemptSession(email, password) {
+        const res = await signIn(email, password);
+        if (!res.success) {
+            return { ok: false, copy: res.error?.code === 'NETWORK' ? NET_COPY : AUTH_COPY };
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+
+        const ss = await staffSession();
+        if (!ss.success) {
+            const code = ss.error?.code;
+            const copy = code === 'STAFF_NOT_REGISTERED' ? NOT_ON_ROSTER
+                : code === 'STAFF_SESSION_REQUIRED' ? SESSION_COPY
+                : code === 'WRONG_STATION' ? STATION_COPY
+                : NET_COPY;
+            return { ok: false, copy };
+        }
+
+        const data = ss.data || {};
+        const role = data.role;
+        const staffStoreId = data.store_id;
+
+        // STORE ISOLATION: Verify this user belongs to marcelas store
+        // We need to check the store_id from staff_roster
+        if (staffStoreId !== '00000000-0000-0000-8333-000000000002') {
+            return { ok: false, copy: "This account belongs to a different store — contact support." };
+        }
+
+        const target = role === 'cashier' ? 'marcelas-cashier.html'
+            : role === 'kitchen' ? 'marcelas-kitchen.html'
+            : role === 'owner' ? 'marcelas-owner.html' : null;
+        if (!target) return { ok: false, copy: UNKNOWN_COPY };
+
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        document.getElementById('staffid').textContent = email;
+        window.location.replace(target);
+        return { ok: true };
+    }
+
+    async function submitSignIn(email, password) {
+        if (!email || !password) { renderCard(NEED_BOTH); return; }
+        const r = await attemptSession(email, password);
+        if (!r.ok) renderCard(r.copy);
+    }
+
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.dataset.signin !== undefined) {
+            const emailInput = document.querySelector('[data-email-input]');
+            const passInput = document.querySelector('[data-pass-input]');
+            void submitSignIn(emailInput ? emailInput.value : '', passInput ? passInput.value : '');
+        }
+    });
+
+    (async function () {
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+        if (saved && saved.email && saved.password) {
+            const r = await attemptSession(saved.email, saved.password);
+            if (r.ok) return;
+        }
+        openForm();
+    })();
+</script>
+</body>
+</html>

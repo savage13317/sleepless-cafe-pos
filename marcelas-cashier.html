@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Marcelas B&B Restaurant | Cashier</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/tailwind.compiled.css">
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3 flex-wrap">
+                <i class="fa-solid fa-cash-register text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Marcelas Cashier</h1>
+                <button id="logoutbtn" hidden data-logout class="rounded-lg px-3 py-2 min-h-[48px] text-xs bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap ml-3">Log out</button>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Marcelas Counter terminal · <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
+            </p>
+            <p id="wholine" class="text-brand-accentLight text-xs mt-1"></p>
+        </div>
+    </header>
+
+    <div id="codefield" class="max-w-7xl w-full mx-auto px-4"></div>
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-cash-register text-brand-accent mr-1"></i>
+            Marcelas B&B Restaurant · Cashier · signed in as <span id="staffid" class="font-mono text-brand-cream">nobody</span> · prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+<!-- ========================= CONFIG BOOTSTRAP =========================== -->
+<script>
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey');
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        cfg.storeSlug = 'marcelas';  // FORCE marcelas store
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
+<!-- ========================= CASHIER APP (ES module) ===================== -->
+<script type="module">
+    import { signIn, setSessionToken, clearSessionToken, staffSession, getOrderByCode, listActivePending, confirmPayment, getMenu,
+            getClaimView, setClaimItemQty, addClaimItem, fmtPeso, fmtTime, fmtCountdown } from './assets/api.js';
+
+    /* --- state ----------------------------------------------------------- */
+    let rows = [];
+    let lookup = null;
+    let toast = null;
+    let boardError = null;
+    let staffEmail = null;
+    let staffName = null;
+    let lastTap = Date.now();
+    let signedOut = false;
+    const IDLE_MS = 3 * 60 * 60 * 1000;
+    let menu = [];
+    let claimBusy = false;
+    let claimNote = null;
+
+    const CODE_RE = /^[0-9]{5}$/;
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy ------------------------------------------------------ */
+    const GATE_COPY = "Staff sign-in required — sign in through the Marcelas login page.";
+    const AUTH_COPY = "That staff account wasn't accepted. Check the credentials.";
+    const BAD_SHAPE = "That's not a 5-digit code.";
+    const NOT_FOUND = "Wrong code, or that order's time is up.";
+    const PAID_COPY = "Paid — sent to the kitchen.";
+    const WHO_COPY = (name) => `Signed in as ${name} — tap Log out to close the register.`;
+    const LOGGED_OUT_COPY = "Signed out. The register is closed — sign in again from the Marcelas staff door.";
+    const IDLE_COPY = "Three hours with no taps at this register, so you were signed out.";
+    const NOT_ON_ROSTER = "This email is signed in but not on the Marcelas staff roster.";
+    const NOT_CASHIER = "This staff member doesn't stand at the Marcelas register.";
+    const WRONG_STORE = "This station belongs to a different store — you are not authorized.";
+    const ERR_COPY = {
+        ORDER_EXPIRED: "This order's time is up, please place a new one",
+        NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
+        ORDER_NOT_FOUND: NOT_FOUND,
+        CLAIM_NOT_OPEN: "That claim isn't open any more — look the code up again before changing it.",
+        LINE_NOT_FOUND: "That line isn't on the claim any more — the board was refreshed.",
+        INVALID_QTY: "That quantity doesn't work — between 1 and 999, or Remove to drop the line.",
+        LAST_LINE_ONLY: "That's the only line left, so it can't be removed — void the claim instead of ordering nothing.",
+        NETWORK: "We can't reach Marcelas right now. Check your connection and try again.",
+        HTTP: "The Marcelas server had trouble with that request. Try again, and if it keeps happening let the manager know.",
+    };
+
+    /* --- live clock ------------------------------------------------------ */
+    const pad = (n) => String(n).padStart(2, '0');
+    const clockEl = document.getElementById('clock');
+    function tick() {
+        const d = new Date();
+        clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    /* --- sign out -------------------------------------------------------- */
+    function signOut(copy) {
+        signedOut = true;
+        clearSessionToken();
+        try { localStorage.removeItem('sl_auth'); } catch { /* private mode */ }
+        staffEmail = null;
+        staffName = null;
+        document.getElementById('staffid').textContent = 'nobody';
+        paintWhoLine();
+        document.getElementById('logoutbtn').hidden = true;
+        renderAuthGate(copy);
+        setTimeout(() => { try { window.location.replace('marcelas-login.html'); } catch { /* page already gone */ } }, 2500);
+    }
+
+    /* --- auth gate card -------------------------------------------------- */
+    function renderAuthGate(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 text-center my-6">
+               <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing on this board loads until a staff session exists — orders are invisible to anonymous visitors.</p>
+             </div>`;
+    }
+
+    /* --- board rows ------------------------------------------------------ */
+    function renderRow(r) {
+        const code = String(r.code ?? '');
+        const secs = Math.max(0, Math.floor(Number(r.seconds_remaining) || 0));
+        const last = secs < 120;
+        const timeCell = last
+            ? `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap">LAST CALL ${fmtCountdown(secs)}</span>`
+            : `<span class="status-live rounded-md px-2 py-1 whitespace-nowrap">${fmtCountdown(secs)}</span>`;
+        return `<tr class="border-b border-brand-border/40${last ? ' status-lastcall' : ''}" data-code="${esc(code)}">
+                <td class="font-mono text-brand-cream tracking-widest py-2 px-3 whitespace-nowrap">${esc(code)}</td>
+                <td class="text-brand-cream py-2 px-3">${esc(r.customer_name ?? '')}</td>
+                <td class="font-mono text-brand-muted py-2 px-3 whitespace-nowrap">${fmtTime(r.created_at)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${timeCell}</td>
+                <td class="font-mono text-center py-2 px-3">${Number(r.items_count ?? 0)}</td>
+                <td class="font-mono text-brand-accentLight text-right py-2 px-3 whitespace-nowrap">${fmtPeso(r.total_amount)}</td>
+              </tr>`;
+    }
+
+    function paintWhoLine() {
+        const el = document.getElementById('wholine');
+        if (!el) return;
+        el.textContent = staffName ? WHO_COPY(staffName) : '';
+    }
+
+    function renderBoard() {
+        const head = `<tr class="bg-brand-card/60 text-brand-muted text-xs uppercase tracking-wider py-2">
+                <th class="px-3 text-left">Code</th>
+                <th class="px-3 text-left">Customer Name</th>
+                <th class="px-3 text-left">Time Created</th>
+                <th class="px-3 text-left">Time Remaining</th>
+                <th class="px-3 text-center">No. of Items</th>
+                <th class="px-3 text-right">Total Amount</th>
+              </tr>`;
+        const body = rows.map(renderRow).join('');
+        const empty = `<tr><td class="text-brand-muted text-sm py-3 px-3 text-center" colspan="6">No unpaid claims on the Marcelas board right now.</td></tr>`;
+        const note = boardError
+            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
+            : '';
+        const scrollNote = rows.length > 10
+            ? `<p class="text-brand-muted text-xs mt-2">All ${rows.length} unpaid claims are listed — scroll the board to reach the ones past the first screen.</p>`
+            : '';
+        return `<div class="glass-card rounded-xl p-4 mt-4 overflow-x-auto">
+                <div class="board-scroll">
+                  <table class="w-full border-collapse">
+                    <tbody>${head}${body || empty}</tbody>
+                  </table>
+                </div>
+                ${scrollNote}
+                ${note}
+              </div>`;
+    }
+
+    /* --- claim line ------------------------------------------------------ */
+    function renderClaimLine(r) {
+        return `<div class="cart-line py-1 border-b border-brand-border/40"
+                    data-claim-line data-claim-item="${esc(r.item_id)}" data-claim-qty="${esc(r.quantity ?? 0)}">
+                    <span class="text-brand-cream text-sm">${esc(r.item_name ?? '')} · ${esc(r.size ?? '')}</span>
+                    <span class="cart-price text-brand-accentLight font-mono text-sm">${fmtPeso(r.subtotal)}</span>
+                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="-1">−</button>
+                    <span class="cart-qty text-brand-cream font-mono text-sm">${Number(r.quantity ?? 0)}</span>
+                    <button class="cart-btn rounded-lg text-sm font-bold" data-claim-qty="1">+</button>
+                    <button class="cart-btn cart-btn-remove rounded-lg text-xs font-bold" data-claim-remove><i class="fa-solid fa-trash mr-1"></i>Remove</button>
+                  </div>`;
+    }
+
+    function renderAddPanel() {
+        if (!menu.length) {
+            return `<p class="text-brand-muted text-xs mt-2">The menu could not be loaded on this terminal.</p>`;
+        }
+        const rows = menu.map((m) => {
+            const sizes = (m.sizes_and_prices ?? []).map((s) =>
+                `<button class="size-chip rounded-lg" data-claim-add data-claim-menu="${esc(m.id)}" data-claim-size="${esc(s.size)}">${esc(s.size)}</button>`).join('');
+            if (!sizes) return '';
+            return `<div class="claim-add-row">
+                    <span class="claim-add-name">${esc(m.name)}</span>
+                    <span class="claim-add-sizes">${sizes}</span>
+                  </div>`;
+        }).join('');
+        return `<div class="rounded-lg p-3 bg-brand-card/40 border border-brand-border/40 mt-3">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add to this claim — tap a size</p>
+                ${rows}
+              </div>`;
+    }
+
+    function renderFound() {
+        const l = lookup;
+        const secs = Math.max(0, Math.floor(Number(l.seconds_remaining) || 0));
+        const status = secs < 120 ? 'status-lastcall' : 'status-live';
+        const lines = (l.items ?? []).map(renderClaimLine).join('');
+        const note = claimNote
+            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[claimNote] ?? ERR_COPY.HTTP}</p>`
+            : '';
+        return `<div class="glass-card rounded-xl p-6 my-4"
+                    data-order-card data-code="${esc(l.code)}" data-order-id="${esc(l.order_id)}">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Claim on the Marcelas board</p>
+                <div class="font-mono text-brand-accentLight text-4xl tracking-widest" style="letter-spacing:0.3em">${esc(l.code)}</div>
+                <p class="text-brand-cream text-lg font-serif mt-2">${esc(l.name)}</p>
+                <div class="flex items-center gap-3 mt-3 flex-wrap">
+                  <span class="text-brand-muted text-xs uppercase tracking-wider">Created ${fmtTime(l.created_at)}</span>
+                  <span class="${status} rounded-md px-2 py-1 whitespace-nowrap">${fmtCountdown(l.seconds_remaining)}</span>
+                  <span class="text-brand-muted text-xs uppercase tracking-wider">${Number(l.items_count ?? 0)} item${Number(l.items_count ?? 0) === 1 ? '' : 's'}</span>
+                  <span class="font-mono text-brand-accentLight">${fmtPeso(l.total_amount)}</span>
+                </div>
+                ${note}
+                <p class="text-brand-accent text-xs uppercase tracking-wider mt-4">On this claim · tap − or + beside the number, Remove to drop a line</p>
+                ${lines}
+                ${renderAddPanel()}
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-confirm>Confirm Payment</button>
+              </div>`;
+    }
+
+    function renderLookup() {
+        if (!lookup) return '';
+        if (lookup.kind === 'found') return renderFound();
+        const copy = lookup.kind === 'badshape' ? BAD_SHAPE
+                   : lookup.kind === 'notfound' ? NOT_FOUND
+                   : ERR_COPY[lookup.copy] ?? ERR_COPY.HTTP;
+        return `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+              </div>`;
+    }
+
+    function renderToast() {
+        if (!toast || Date.now() >= toast.until) return '';
+        return `<div class="glass-card rounded-xl p-3 my-3 text-center">
+                <p class="text-brand-accentLight text-sm font-semibold">${toast.msg}</p>
+              </div>`;
+    }
+
+    function paint() {
+        document.getElementById('app').innerHTML = renderLookup() + renderToast() + renderBoard();
+    }
+
+    /* --- board refresh --------------------------------------------------- */
+    async function refreshBoard() {
+        const res = await listActivePending();
+        if (!res.success) { boardError = res.error?.code ?? 'HTTP'; return; }
+        boardError = null;
+        rows = (res.data || []).filter((r) => Number(r.seconds_remaining) > 0);
+    }
+
+    /* --- code lookup ----------------------------------------------------- */
+    async function lookupCode(raw) {
+        const code = String(raw ?? '').trim();
+        if (!CODE_RE.test(code)) {
+            lookup = { kind: 'badshape' };
+            return paint();
+        }
+        const res = await getOrderByCode(code);
+        if (!res.success) {
+            lookup = { kind: 'error', copy: res.error?.code ?? 'HTTP' };
+            if (res.error?.code === 'ORDER_NOT_FOUND') lookup = { kind: 'notfound' };
+            return paint();
+        }
+        const d = res.data || {};
+        lookup = claimFromView(d, d.order_id ?? '');
+        claimNote = null;
+        paint();
+    }
+
+    /* --- claim helper ---------------------------------------------------- */
+    function claimFromView(d, orderId) {
+        return {
+            kind: 'found',
+            order_id: String(d.order_id ?? orderId ?? ''),
+            code: String(d.code ?? ''),
+            name: d.customer_name ?? '',
+            created_at: d.created_at,
+            seconds_remaining: d.seconds_remaining,
+            items_count: d.items_count,
+            total_amount: d.total_amount,
+            items: d.items ?? [],
+        };
+    }
+
+    async function applyClaim(orderId, res) {
+        if (!res.success) {
+            claimNote = res.error?.code ?? 'HTTP';
+        } else {
+            const d = res.data || {};
+            if (!d.order_id) { claimNote = 'CLAIM_NOT_OPEN'; }
+            else { lookup = claimFromView(d, orderId); claimNote = null; }
+        }
+        await refreshBoard();
+        paint();
+    }
+
+    async function editClaimQty(orderId, itemId, quantity) {
+        if (claimBusy || !orderId || !itemId) return;
+        claimBusy = true;
+        const res = await setClaimItemQty(orderId, itemId, quantity);
+        claimBusy = false;
+        await applyClaim(orderId, res);
+    }
+    async function addClaimLine(orderId, menuItemId, size) {
+        if (claimBusy || !orderId || !menuItemId || !size) return;
+        claimBusy = true;
+        const res = await addClaimItem(orderId, menuItemId, size, 1);
+        claimBusy = false;
+        await applyClaim(orderId, res);
+    }
+
+    /* --- payment --------------------------------------------------------- */
+    async function pay(code) {
+        if (claimBusy) return;
+        claimBusy = true;
+        const res = await confirmPayment(code);
+        claimBusy = false;
+        if (res.success) {
+            lookup = null;
+            toast = { msg: PAID_COPY, until: Date.now() + 6000 };
+        } else {
+            lookup = { kind: 'error', copy: res.error?.code ?? 'HTTP' };
+        }
+        await refreshBoard();
+        paint();
+    }
+
+    /* --- event wiring ---------------------------------------------------- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        lastTap = Date.now();
+        if (t.dataset.logout !== undefined) {
+            if (signedOut) return;
+            void signOut(LOGGED_OUT_COPY);
+            return;
+        }
+        if (t.dataset.confirm !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card) void pay(card.dataset.code);
+        }
+        else if (t.dataset.lookup !== undefined) {
+            const input = document.querySelector('[data-code-input]');
+            void lookupCode(input ? input.value : '');
+        }
+        else if (t.dataset.claimQty !== undefined) {
+            const card = t.closest('[data-order-card]');
+            const line = t.closest('[data-claim-line]');
+            if (card?.dataset.orderId && line?.dataset.claimItem) {
+                void editClaimQty(card.dataset.orderId, line.dataset.claimItem,
+                    Number(line.dataset.claimQty) + Number(t.dataset.claimQty));
+            }
+        }
+        else if (t.dataset.claimRemove !== undefined) {
+            const card = t.closest('[data-order-card]');
+            const line = t.closest('[data-claim-line]');
+            if (card?.dataset.orderId && line?.dataset.claimItem) {
+                void editClaimQty(card.dataset.orderId, line.dataset.claimItem, 0);
+            }
+        }
+        else if (t.dataset.claimAdd !== undefined) {
+            const card = t.closest('[data-order-card]');
+            if (card?.dataset.orderId && t.dataset.claimMenu && t.dataset.claimSize) {
+                void addClaimLine(card.dataset.orderId, t.dataset.claimMenu, t.dataset.claimSize);
+            }
+        }
+    });
+
+    /* --- code input ------------------------------------------------------ */
+    function openCodeInput() {
+        const host = document.getElementById('codefield');
+        host.innerHTML =
+            `<div class="glass-card rounded-xl p-4 my-4">
+               <label class="text-brand-muted text-xs uppercase tracking-wider">Claim code — type or scan</label>
+               <input type="text" placeholder="5-digit code" spellcheck="false" autocomplete="off"
+                      class="font-mono text-3xl tracking-widest rounded-lg p-3 text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-border"
+                      data-code-input>
+               <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2 w-full" data-lookup>Look Up</button>
+             </div>`;
+        const input = host.querySelector('[data-code-input]');
+        input.addEventListener('change', () => void lookupCode(input.value));
+    }
+
+    /* --- boot ------------------------------------------------------------ */
+    (async function () {
+        const q = new URLSearchParams(location.search);
+        let email = q.get('email'), password = q.get('password');
+        if (!email || !password) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+            if (saved && saved.email && saved.password) { email = saved.email; password = saved.password; }
+        }
+        if (!email || !password) { renderAuthGate(GATE_COPY); return; }
+
+        const res = await signIn(email, password);
+        if (!res.success) {
+            renderAuthGate(res.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : AUTH_COPY);
+            return;
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        staffEmail = d?.user?.email || email;
+        document.getElementById('staffid').textContent = staffEmail;
+
+        const ss = await staffSession();
+        if (!ss.success) {
+            const code = ss.error?.code;
+            renderAuthGate(code === 'STAFF_NOT_REGISTERED' ? NOT_ON_ROSTER
+                : code === 'WRONG_STATION' ? NOT_CASHIER
+                : code === 'WRONG_STORE' ? WRONG_STORE
+                : code === 'NETWORK' ? ERR_COPY.NETWORK : ERR_COPY.HTTP);
+            return;
+        }
+        const me = ss.data || {};
+        staffName = String(me.display_name ?? '') || staffEmail;
+        document.getElementById('staffid').textContent = staffName;
+        if (String(me.role ?? '') !== 'cashier') { renderAuthGate(NOT_CASHIER); return; }
+
+        /* Store isolation check */
+        if (me.store_id !== '00000000-0000-0000-8333-000000000002') {
+            renderAuthGate(WRONG_STORE);
+            return;
+        }
+
+        paintWhoLine();
+        document.getElementById('logoutbtn').hidden = false;
+        lastTap = Date.now();
+
+        openCodeInput();
+        const cat = await getMenu();
+        if (cat.success) menu = (cat.data || []).filter((m) => m.is_available === true);
+        await refreshBoard();
+        paint();
+        setInterval(async () => {
+            if (signedOut) return;
+            if (Date.now() - lastTap >= IDLE_MS) { void signOut(IDLE_COPY); return; }
+            await refreshBoard();
+            paint();
+        }, 5000);
+    })();
+    </script>
+</body>
+</html>

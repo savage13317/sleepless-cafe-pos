@@ -9,6 +9,10 @@
 
 One repository, four static HTML entry points, one Supabase project as the entire backend. No Node/Express runtime is deployed — the "backend" is Supabase (PostgreSQL + SQL functions + Storage + Realtime + RLS), and the client-side API layer must still return the SOP JSON envelope so every call site is uniform.
 
+**Version:** v2.0 (Multi-Tenant + Staff JWT Fix) · **Date:** 2026-10-24
+
+**Phases 1–9 complete. Staff JWT fix applied and verified.** All ~16 functions that previously used `jwt_store_id()` now use roster-based store lookup for staff JWTs. Full browser test flow passed: Menu → Cashier → Kitchen → Served.
+
 ```
 Customer ──creates──▶ orders(pending_payment) ──cashier confirms──▶ paid ──kitchen serves──▶ served
                           │                                            │

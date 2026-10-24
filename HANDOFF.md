@@ -1,17 +1,62 @@
 # HANDOFF.md — Sleepless Cafe POS · continuation brief
 
-**Written:** 2026-10-19 · **updated:** 2026-10-23 (Phase 9 files + **9g second store `marcelas`**, §15) · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
-**Where we are:** Phases 1–7 done · **Phase 5 gate PASSED** · **Phase 6 (QA sweep) PASSED** (14/14 anon probes
-conform, zero dead links, zero static console risks) · **Phase 7 (GitHub Pages dogfood) PASSED on the public
-host** — Gate A green except the manual phone run — the Gate A audit fixed three public-host defects
-(commit `b62fd2f`, §4 D2), and three customer-reported UX passes reworked `menu.html` (§4 D3/D4, commits
-`2342c83` + `eab2481` + `1696a96`) · **R10 UX pass done** (cart quantity moved between the steppers, a
-no-double-order guard, an alphabetical scrolling unpaid board, and a looked-up claim that is editable before
-payment — commits `7916a0d` + `ce3b24e`, §9) · **Phase 8 prep done 2026-10-21** (Tailwind CDN → compiled CSS on all five pages, cron artifacts authored, `tools/inject-config.mjs` exercised 4/4) · **Staff identity + login door built AND applied LIVE 2026-10-21 (human-authorized)** — sql/07 pasted (4 chunks, all 201), the 17 fences of 02 live (5 chunks, all 201), 3 auth identities created, QA probes green both ways; record: §11 · **Phase 8 itself still parked** — open items: the manual phone run, a Vercel account/domain, and live cron application (needs a signed-in dashboard + human approval of the Edge-Function staff secrets). · **UI/UX sweep 2026-10-21 SHIPPED: committed + pushed `4888f24..614b9f3`, public-host door proof green — §12** · **UI sweep 2 2026-10-21 SHIPPED: committed + pushed `9bd7ee9..fe296fb` (three chunks), all seven items re-proven on the public host — §13** · **Phase 9 (multi-store + tier model) — 9a SCHEMA + 9b sid-seed + 9c JWT helpers & authenticated policy swap ALL APPLIED LIVE 2026-10-23 (verified: stores=1 flagship; 3 roster identities carry `raw_user_meta_data.sid`=flagship id; 5 JWT helpers installed; authenticated policies store-scoped via `jwt_store_id()` with `stores` policies using `id` not `store_id` — 08 latent bug fixed on apply; interim option B keeps anon read broad, anon menu read still HTTP 200 flagship); **9d FUNCTION DELTA APPLIED LIVE + VERIFIED 2026-10-23** (all 02/07 function bodies now store-scoped via `jwt_store_id()` + tier-gated via `tier_gate`/`starter_write_gate`/`cap_allows` — chunks 1–5 all 201; new anon-callable routing helpers `resolve_store`/`menu_for_store`/`categories_for_store` + `purge_expired_orders_store`/`purge_expired_orders_all` installed; `stores_read_public` anon policy `FOR SELECT TO anon USING (is_open=true)` installed to close the store-directory gap — anon `GET /stores` now returns flagship; anon call-tests green: `resolve_store?slug=flagship`→success, `?slug=ghost`→STORE_NOT_FOUND, `menu_for_store`/`categories_for_store` return full flagship data, `get_order_by_code` anon→STAFF_SESSION_REQUIRED body-ran; authenticated cross-store DENIAL + tier-gate probes deferred to 9e staff-JWT login per §5.3); **9e FRONTEND APPLIED (working tree, NOT committed) 2026-10-23**: `config.js` gained `storeSlug` (default `flagship`, priority window→localStorage→committed); `api.js` gained anon-callable `resolveStore`/`menuForStore`/`categoriesForStore`; `menu.html` customer path now resolves `?store=<slug>` (default `flagship`) → `resolve_store` → caches `{slug,storeId,tier}` in `localStorage.sl_store` TTL 60s → loads via `menu_for_store`/`categories_for_store` (store-scoped; rows carry no `is_available`, filter relaxed to `!== false`); `owner.html` captures `staff_session().data.tier` into `ownerTier` and pre-gates cashier/kitchen adds with an upgrade banner (avoids orphan identity), plus `TIER_REQUIRED`/`MENU_LIMIT_REACHED`/`STORE_CONTEXT_REQUIRED`/`STORE_MISMATCH` copy. Browser-verified on local static server (:8731, working tree): `menu.html?store=flagship`→5 tabs+items, `?store=ghost`→"branch isn't open" copy, no-param→flagship (backward-compat); `owner.html` parses (renders sign-in gate). cashier/kitchen need NO change (store axis is JWT-driven via `jwt_store_id()`). **OPEN DECISION: flagship seeded `tier=starter` → owner can no longer add cashier/kitchen staff or new menu items on it (tier not self-servable; flip only via service_role). Existing flagship staff/items predate the gate. Confirm flagship should be `pro` (unrestricted) or stay `starter`.** Authenticated live tier-gate probe still needs a human owner login (bcrypt pw unrecoverable). 9f cron/Vercel PARKED — §14**
+**Written:** 2026-10-19 · **updated:** 2026-10-23 (Phase 9 files + **9g second store `marcelas`**, §15) · **updated:** 2026-10-24 (Phase 9h **staff JWT fix** — 16 functions + RLS policies, full browser test passed) · **Branch:** `main` · **Repo:** `github.com/savage13317/sleepless-cafe-pos`
+**Where we are:** Phases 1–9 complete · **Phase 9h (staff JWT fix) SHIPPED** — Supabase switched from HS256 to ECC (P-256) JWT signing; `jwt_store_id()` returns NULL for staff JWTs (no `sid` claim). Solution: roster-based lookup in all 16 affected functions + helper function `staff_has_email()` for RLS (avoids infinite recursion). Full browser test passed: Order 96078 completed lifecycle pending → paid → served. · **Stores:** flagship (pro) + marcelas (starter) · **5 staff accounts** verified. · **See §15 for multi-tenant details; §15h below for staff JWT fix.**
 
-Read this file top to bottom before touching anything. Sections 1–3 are facts that were
-**verified against the live project** — they contradict several plausible-looking assumptions,
-and re-deriving them costs an hour of dashboard work.
+---
+
+## Phase 9h — Staff JWT Fix (COMPLETE · 2026-10-24)
+
+**Critical Discovery:** Supabase switched from HS256 to ECC (P-256) JWT signing. Staff JWTs minted via `supabase.auth.signInWithPassword()` do **not** contain a `sid` claim. All `jwt_store_id()` calls return NULL for staff users, breaking store-scoped RLS.
+
+**Root Cause:** `jwt_store_id()` reads the `sid` claim from JWT payload. Staff JWTs contain `sub`, `aud`, `role`, `email`, `app_metadata` — but **no `sid`**.
+
+**Solution:** Replace `jwt_store_id()` with roster-based lookup:
+```sql
+-- Before (broken):
+sid := jwt_store_id();  -- returns NULL for staff JWTs
+
+-- After (working):
+sid := (SELECT r.store_id FROM staff_roster AS r
+        WHERE r.email = block.email AND r.active = true LIMIT 1);
+```
+
+### Applied Fix: `sql/99_COMPLETE_STAFF_JWT_FIX.sql`
+
+16 functions + 1 RLS policy updated:
+
+**Cashier-facing (4):** `get_order_by_code`, `confirm_payment`, `list_active_pending`, `set_claim_item_qty`
+**Kitchen-facing (3):** `kitchen_queue`, `mark_served`, `set_preparing`
+**Owner-facing (9):** `void_order`, `add_claim_item`, `delete_category`, `create_menu_item`, `update_menu_item`, `sales_report`, `turnover_stats`, `create_category`, `reorder_categories`
+
+### RLS Policy Fix
+
+- `roster_authenticated_read_store` policy → uses `staff_has_email()` helper (avoids infinite recursion from inline EXISTS)
+- `orders_staff_read` / `orders_staff_update` → use roster lookup for staff JWTs
+- `roster_role_of` → made `SECURITY DEFINER` to bypass RLS
+
+### Implementation Notes
+
+- **Block labels:** `<<block>>` BEFORE `DECLARE` when variable names shadow column names
+- **SECURITY DEFINER:** Functions querying `staff_roster` or `orders` need SECURITY DEFINER
+- **ORDER BY placement:** Inside `jsonb_agg()`: `jsonb_agg(jsonb_build_object(...) ORDER BY ...)`
+
+### Test Credentials
+
+```
+flagship
+  dev@sleepless-cafe.test / DevStaff2026!
+  flagship-owner@sleepless-cafe.test / OwnerFlagship2026!
+
+marcelas
+  marcelas-owner@sleepless-cafe.test / OwnerMarcelas2026!
+  marcelas-cashier@sleepless-cafe.test / CashierMarcelas2026!
+  marcelas-kitchen@sleepless-cafe.test / MarcelasStaff2026!
+```
+
+### Verified Flow
+
+Order 96078: pending → paid (cashier) → preparing (kitchen) → served (kitchen). Full lifecycle verified.
 
 ---
 
@@ -232,7 +277,7 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
   cannot be deleted because a paid order still references it. `categories` **4** — category UUIDs
   `11111111-1111-1111-8333-000000000001..4`; live `display_order` is **0-based** (Coffee 0, Non-Coffee 1,
   Pastries 2, Desserts 3) while `sql/05_seed.sql` is 1-based, so a re-seed and the live board differ by one.
-  `orders` **9 completed** (revenue ₱3,765.00, avg ₱418.33) and **0 `pending_payment`**, `order_items` **14**
+  `orders` **9 completed** (revenue ₱3,765.00, avg ₱418.33) and **0 `pending_payment`**, `order_items` **14`
   (re-probed live 2026-10-20 after the R10 pass). Codes in `orders`, oldest first: `63242, 02342, 13341,
   21574, 85063, 33667, 96405` all `served`, plus `87823` and `34865` `paid` — the two `paid` rows are the R10
   pass (the human's own claim ₱1,550.00 and my probe claim ₱1,050.00), which is why revenue moved ₱1,165.00 →
@@ -285,7 +330,8 @@ page clears it for the others — clear `sl_config` and `sl_auth` before simulat
 | `menu.html` | **29,158 B, fixed five times (`2342c83`, `eab2481`, `1696a96`, `f9194aa`, `ce3b24e`).** **UI/UX sweep 2026-10-21 (files only, not yet committed):** the cart/card stepper is now `− qty +` (minus LEFT, plus RIGHT) with the copy "The number between − and + is how many you have…". Gate passed: cart → checkout → real order with a real 5-digit code. Config bootstrap is a **classic** script above the module script. Code rendered as a **string** (leading zeros preserved). **Two customer-facing defects fixed:** (1) cart lines were plain rows with no controls and `setQty` clamps at 1, so nothing in the cart could be undone — every line now carries `+` / `−` / `Remove` (`data-cart-qty`, `data-cart-remove`) and `setCartQty` deletes the entry when the quantity would fall below 1; (2) every size chip rendered with identical classes and the choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `paint()` writes `#app` + `#cartarea`, `paintError()` owns the fixable-cart choice; **`data-checkout` IS the place-order action** (no `Place Order` button, no `awaitingName` flag, no `input` `change` listener), and it reads `[data-name-input]` and refuses a blank/over-100-char name client-side BEFORE any request, with the refusal line rendered ABOVE the still-present field (`nameFieldHtml(complaint)`) — the old `paintNameCopy` wrote the copy and immediately re-rendered the field, so the message never survived a frame. **Third pass the same day (`1696a96`):** cart rows left `flex items-center justify-between` (which spreads the leftover space BETWEEN items, so the amount and the steppers drifted to a different x on every row) and became `class="cart-line"` with the grid in `app.css`; `setName` now refuses anything that is not letters — `/^\p{L}\p{L} '\-]*$/u` — plus a two-letter minimum, so the digits-only name in the customer's screenshot can no longer reach the counter; the success instruction paragraph gained `mx-auto` + `text-center`; the footer gained `© 2026 Sleepless Cafe · All rights reserved · Powered by CapFam, Ltd.` **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `cashier.html` | **30,555 B, reworked in the R10 pass (`7916a0d` + `ce3b24e`).** Gate passed: code lookup + live unpaid table + countdown + Confirm Payment → `paid`. Same classic-script bootstrap fix. New: the board is server-sorted and wrapped in a scrolling viewport (sec 9.3), and a looked-up claim renders as a cart-like editable card — per-line `+` / qty / `−` / `Remove` plus an "Add to this claim" size-chip panel — before Confirm Payment is allowed (sec 9.4). `claimBusy` guards every edit and the payment so one tap cannot race the next. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · **UI/UX sweep 2026-10-21 (files only, not yet committed):** staff NAME from `staff_session()` `display_name` (footer + accent line on the board), a real `data-logout` Log out button, 3 h idle teardown (`IDLE_MS = 3*60*60*1000` → `clearSessionToken()` + `sl_auth` removed + gate copy), boot roster check (`NOT_CASHIER` / `STAFF_NOT_REGISTERED`), and the same `− qty +` stepper · **Sweep 2 (2026-10-21, SHIPPED `fe296fb`, sec 13):** Log out button + staff name line moved into the STICKY header (`#logoutbtn` toggled with the `hidden` attribute, `#wholine` written by `paintWhoLine()` via `textContent`), the code input switched `box-content` → `box-border` with the buttons inside the card, the Add-to-claim panel rebuilt as `.claim-add-*` grid rows, and logout now hands back to `login.html` 2.5 s after the gate copy |
 | `kitchen.html` | 19,949 B, **unchanged through phase 7**. Board renders, Hold only when not preparing, `startWatching(repaint, repaint)` + 1 s paint tick. **Gate met** via the fixed realtime.js (dot = WS live, card appears without reload). **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Hold (:186) — the 48 px KDS tap targets now actually apply · **UI/UX sweep 2026-10-21 (files only, not yet committed):** peso removed entirely (the cashier owns pricing, the kitchen owns make-time); item name `text-2xl font-serif`, per-line qty `text-2xl font-mono` as `N×`, cups chip `N cups` summed from item quantities, order code demoted to `text-xs` · **Sweep 2 (2026-10-21, SHIPPED `fe296fb`, sec 13 item 6):** the card header is `flex items-baseline space-between gap-4 flex-wrap` and the reference number now wears its own bordered chip, so name / cups / code no longer run together |
-| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Void (:217) / Up (:361) / Down (:362) · **Staff identity 2026-10-21 (+267 lines, files only):** Tab 5 Staff Roster — list (`roster_list`), add-employee **pairing rule** (`signupAccount` → `rosterAdd` with the SAME credentials, never one without the other), suspend/reactivate, move station, `LAST_OWNER_ONLY` refuses demoting the last active owner, reset shows the memorable temp password **ONCE** · **UI/UX sweep 2026-10-21 (files only, not yet committed):** Focus `<select data-sales-focus>` dropdown on the Sales tab (All days / every day, month or year in the window, generated in UTC so an empty period stays selectable); focusing narrows the window AND drops the chart one step; the CSV follows `salesGrain` (the owner's pick), not the chart's finer grain; filename carries the focus label; window line prints ISO slices + bar grain, never `fmtTime` · **Sweep 2 (2026-10-21, SHIPPED `fe296fb`, sec 13 item 7):** that `<select>` was REPLACED by a DOM chip panel (`focusOpen` flag + `focusToggle()` + `focusPanel()`) because a styled native `<select>` opens and closes itself on one tap in Chrome; the remaining native selects (menu builder, categories, roster role) still carry the same defect, unfixed |
+| `owner.html` | 41,385 B, **Phase 5 fix applied + R9 `ERR_COPY` line (`f637cc8`)**. `MENU_ITEM_IN_USE` copy added at line 167 so the refusal renders as human prose, not the generic HTTP fallback. The config bootstrap was lifted into a classic `<script>` above the module script (same block as `cashier.html`) and now also persists `?owneremails=` into `sl_config.ownerEmails`, which is what the owner allowlist gate reads. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) · `min-h-[48px]` latent fix landed on Void (:217) / Up (:361) / Down (:362) · **Staff identity 2026-10-21 (+267 lines, files only):** Tab 5 Staff Roster — list (`roster_list`), add-employee **pairing rule** (`signupAccount` → `rosterAdd` with the SAME credentials, never one without the other), suspend/reactivate, move station, `LAST_OWNER_ONLY` refuses demoting the last active owner, reset shows the memorable temp password **ONCE** · **UI/UX sweep 2026-10-21 (files only, not yet committed):** Focus `<select data-sales-focus>` dropdown on the Sales tab (All days / every day, month or year in the window, generated in UTC so an empty period stays selectable); focusing narrows the window AND drops the chart one step; the CSV follows `salesGrain` (the owner's pick), not the chart's finer grain; filename carries the focus label; window line prints ISO slices + bar grain, never `fmtTime` · **Sweep 2 (2026-10-21, SHIPPED `fe296fb`, sec 13 item 7):** that `<select>` was REPLACED by a DOM chip panel (`focusOpen` flag + `focusToggle()` + `focusPanel()`)
+because a styled native `<select>` opens and closes itself on one tap in Chrome; the remaining native selects (menu builder, categories, roster role) still carry the same defect, unfixed |
 | `index.html` | 11,274 B. Only valid cross-page link in the repo: `<a href="menu.html">` at line 160. **Fixed 2026-10-24:** the build-status strip said `pending` ×5 on a finished public site — now `live` ×5 plus an honest note that the staff pages are reached by direct URL, not linked from the root. **R9 (`f9194aa`):** lines 114 and 154 now say 30 minutes. Static landing page with no config bootstrap, so those are literals - documented drift risk, sec 8.1. **Phase 8:** compiled-CSS link at line 30, CDN + inline tailwind.config script removed (2026-10-21 phase-8) |
 | `MASTER_PLAN.md` | §4a added: "Platform facts verified live (Phases 1–3)" — RPC path, Phase-A staff account, `assets/ui.js` deviation. |
 | `tests/api.spec.md` | TRANSPORT NOTE added under §1. **R9:** `deleteCategory` row carries the `MENU_ITEM_IN_USE` failure shape and the code table gained that row. **R10:** `getOrderByCode` row now shows the `order_id` + `items[]` shape (its body IS `claim_view`), three RPC rows added (`getClaimView`/`setClaimItemQty`/`addClaimItem`), and the code table gained `CLAIM_NOT_OPEN`/`INVALID_QTY`/`LINE_NOT_FOUND`/`LAST_LINE_ONLY` with the verbatim cashier copy. |
@@ -343,9 +389,9 @@ evidence: dot = WS live, paid card appears on the KDS with **no reload**, and `m
      `−` at ×1 deletes the line and the empty-cart copy renders, `Remove` drops a ×2 line outright,
      `+` increments, and totals/counts recompute.
   2. *"no identifier for the client if it is already selected"* — chips were visually identical and the
-     choice was destroyed by the next repaint. Verified the first chip renders selected, tapping another
-     chip moves the marker, the marker survives a category switch (`sizeChoice` is page-level), and
-     Add to Cart prices the **selected** size (Large = 170.00, not the 140.00 default).
+     choice lived on the card (`data-size`), which `paint()` destroys on the next `innerHTML` replacement, so a size tap gave zero feedback — selection now lives in a page-level `sizeChoice` Map and the chosen chip gets a filled background, a check icon and `aria-label="Selected size: …"` (never color alone). `addToCart` reads `sizeChoice` first, so the size the customer sees is the size that gets ordered. **Checkout restructured the same day (`eab2481`):** the DOM is three sibling blocks in order — `#app` (menu), `#namefield` (Full Name card), `#cartarea` (cart) — so the name field paints ABOVE the cart and neither block is destroyed by the other's repaint; `render()` became `renderMenu()`, `renderError()` slimmed to the copy block, and
+   `paintError()` now owns the fixable-cart choice (`MENU_ITEM_UNAVAILABLE` / `INVALID_SIZE` keep the
+   cart visible, everything else clears it).
 - Static console sweep clean: no import/export mismatches (25 exports in `api.js`), no undefined
   identifiers, no duplicate `id` attributes, all 8 in-page `JSON.parse` sites are `try/catch`-guarded.
 - One defect found and fixed: the comment above `uploadImage` said **PUT** while the code is **POST**
@@ -1063,7 +1109,7 @@ width. Kitchen after paying 22120 over REST: header children sit 16 px apart (`g
 "3 cups" at 24 px, the code chip 12 px with a 1 px border and `bg-brand-card` fill. Owner: tapping Focus opened 30
 chips + "Close focus" and they were still there 6 s later (a browser popup cannot survive that); tapping the
 `2026-10-20` chip set the window line to "Window 2026-10-20 → 2026-10-20 · daily bars · focused on 2026-10-20" with
-₱5,250.00 / 9 completed — the same day the sweep-1 monthly proof established — and folded the panel. Logging out
+₱5,250.00 / 9 completed / ₱583.33 — the same day the sweep-1 monthly proof established — and folded the panel. Logging out
 showed the gate copy, then `page.url` became `http://localhost:8731/login.html` with the sign-in FORM on screen
 (`sl_auth` gone, so the door did not boot back in).
 
@@ -1109,7 +1155,7 @@ at 48 px tall, still 30 after a 6 s repaint, and tapping `2026-10-20` folded the
 
 ---
 
-## 14. Phase 9 — multi-store (multi-tenancy) + tier subscription model (2026-10-23) — **9a APPLIED LIVE · 9b–9f pending · files uncommitted**
+## 14. Phase 9 — multi-store (multi-tenant) + tier subscription model (2026-10-23) — **9a APPLIED LIVE · 9b–9f pending · files uncommitted**
 
 **Status 2026-10-23 — 9a APPLIED LIVE (schema block only, human-authorized via the authenticated `database/query` path):**
 `stores` created + seeded (1 row, slug `flagship`, id `00000000-0000-0000-8333-000000000001`, tier `starter`), `store_id`
@@ -1248,7 +1294,7 @@ Human request: "make a another folder in this project … second store is Marcel
 
 **`menu.html` wiring (4 surgical edits, flagship byte-stable):** Google Fonts extended with `Cinzel` + `Plus Jakarta Sans` (Inter/Playfair untouched) · `<link rel="stylesheet" href="stores/marcelas/tokens.css">` after the compiled artifact (safe unconditionally — every rule is scoped) · a **classic non-module `<script>` in `<head>`** stamping `data-sl-store` from `?store=` before the module runs (no first-paint flash) · `<h1 data-branch-title>` + `<span data-branch-name>` ×2 in the footer, rewritten by `applyBranchTitle()` **only when `slug !== 'flagship'`**, via `textContent` (the store name is DB data — never parsed as markup).
 
-**Browser proof (local static server, working tree):** `?store=marcelas` → `data-sl-store=marcelas`, body `rgb(15,23,42)`, `--brand-accent #d4af37`, `.text-brand-accent` computed `rgb(212,175,55)`, `.bg-brand-card/60` `rgba(30,41,59,.6)`, `.border-brand-border/60` `rgba(140,106,21,.6)`, h1 `Cinzel` + `MARCELA'S B&B RESTAURANT`, body `Plus Jakarta Sans`, footer `Marcela's B&B Restaurant` ×2, 4 categories + marcelas items. `menu.html` (no param) and `?store=flagship` → flagship palette byte-identical (`rgb(20,12,8)`, `#d48d37`, `rgb(212,141,55)`, Playfair/Inter, `SLEEPLESS CAFE`, 5 categories). `?store=ghost` → flagship palette retained + "That branch isn't open right now."
+**Browser proof (local static server, working tree):** `?store=marcelas` → `data-sl-store=marcelas`, body `rgb(15,23,42)`, `--brand-accent #d4af37`, `.text-brand-accent` computed `rgb(212,175,55)`, `.bg-brand-card/60` `rgba(30,41,59,.6)`, `.border-brand-border/60` `rgba(140,106,21,.6)`, h1 `Cinzel` + `MARCELA'S B&B RESTAURANT`, body `Plus Jakarta Sans`, footer `Marcela's B&B Restaurant` ×2, 4 categories + marcelas items. `menu.html` (no param) and `?store=flagship` → flagship palette byte-identical (`rgb(20,12,8)`, `#d48d37`, Playfair/Inter, `SLEEPLESS CAFE`, 5 categories). `?store=ghost` → flagship palette retained + "That branch isn't open right now."
 
 **STILL OPEN — state these honestly, they are capability gates, not bugs:**
 1. **An order placed from `menu.html?store=marcelas` lands in flagship.** Interim option B keeps the broad anon read, and an anon customer carries no `sid`, so `create_order` `COALESCE`s to the legacy uuid. Closing this needs the store-bearing anon token (§4.3-A, Edge-Function-minted, needs `SL_JWT_SECRET`).

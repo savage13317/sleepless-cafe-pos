@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en" class="min-h-screen">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Owner surface: unlisted AND unindexed (Gate B). No other POS page links
+         here, and nothing here links to menu / cashier / kitchen. -->
+    <meta name="robots" content="noindex">
+    <title>Marcelas B&B Restaurant | Owner</title>
+
+    <!-- Tailwind utilities: compiled CSS (Phase B build; loads below, after app.css, to match the CDN's runtime injection order) -->
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Playfair Display -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+    <!-- Brand tokens are the ONLY place colors are defined. This link MUST stay
+         above app.css below, because app.css consumes the :root custom
+         properties out of the resolved stylesheet. -->
+    <link rel="stylesheet" href="assets/tokens.css">
+    <link rel="stylesheet" href="assets/app.css">
+
+    <!-- Favicon: with no icon declared, every page load requests /favicon.ico and
+         GitHub Pages answers 404 — a dead request on every visit. SVG only, self-contained. -->
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+
+    <!-- Tailwind utilities, compiled at build time from tools/tailwind.config.js, which READS assets/tokens.css — tokens.css stays the single source of truth; regenerate the artifact (node ./node_modules/tailwindcss/lib/cli.js build -i tools/tailwind.src.css -o assets/tailwind.compiled.css -c tools/tailwind.config.js -m) whenever a token changes. Loaded HERE (after tokens.css + app.css) because the CDN injected its generated stylesheet at runtime, after every head link — same cascade. -->
+    <link rel="stylesheet" href="assets/tailwind.compiled.css">
+</head>
+
+<body class="min-h-screen flex flex-col antialiased selection:bg-brand-accent selection:text-brand-dark">
+
+    <!-- STICKY GLASS HEADER: wordmark + live clock (HH:MM:SS, 1s tick). -->
+    <header class="glass-panel sticky top-0 z-50 border-b border-brand-border/60 no-print">
+        <div class="max-w-7xl w-full mx-auto px-4 py-2">
+            <div class="flex items-center space-x-3">
+                <i class="fa-solid fa-crown text-brand-accent text-2xl mr-2"></i>
+                <h1 class="text-lg sm:text-xl font-bold tracking-tight text-brand-cream font-serif whitespace-nowrap">Marcelas Owner</h1>
+            </div>
+            <p class="text-brand-muted text-xs mt-1">
+                Marcelas Back office · <span class="font-mono text-brand-accentLight" id="clock">--:--:--</span>
+            </p>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-7xl w-full mx-auto px-4 flex-1"></main>
+
+    <footer class="glass-panel border-t border-brand-border/60 mt-auto py-3 px-4 no-print">
+        <p class="text-brand-muted text-xs">
+            <i class="fa-solid fa-crown text-brand-accent mr-1"></i>
+            Marcelas B&B Restaurant · Owner · signed in as <span id="ownerid" class="font-mono text-brand-cream">nobody</span> · prices in Philippine peso (₱)
+        </p>
+    </footer>
+
+    <!-- ============================ CONFIG BOOTSTRAP (classic) ===================
+     Classic (non-module) on purpose: a page's module body runs AFTER its
+     imported modules, so a bootstrap inside the module body would execute
+     after config.js already resolved CONFIG from localStorage. Values are
+     never printed or echoed.                                                    -->
+<script>
+    /* --- config bootstrap (Phase A): persist ?sburl= / ?sbkey= / ?owneremails=
+       once. Classic (non-module) on purpose: must run before config.js is
+       evaluated. Values are never printed or echoed. */
+    (function () {
+        const q = new URLSearchParams(location.search);
+        const url = q.get('sburl'), key = q.get('sbkey'), emails = q.get('owneremails');
+        if (!url && !key && !emails) {
+            /* FORCE marcelas store */
+            let cfg;
+            try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+            cfg.storeSlug = 'marcelas';
+            localStorage.setItem('sl_config', JSON.stringify(cfg));
+            return;
+        }
+        let cfg;
+        try { cfg = JSON.parse(localStorage.getItem('sl_config') || '{}'); } catch { cfg = {}; }
+        if (url) cfg.sbUrl = url;
+        if (key) cfg.sbKey = key;
+        if (emails) cfg.ownerEmails = emails.split(',').map(function (s) { return s.trim(); }).filter(Boolean).join(',');
+        localStorage.setItem('sl_config', JSON.stringify(cfg));
+    })();
+</script>
+
+    <!-- ========================== OWNER APP (ES module) ====================
+     Imports from './assets/api.js' AND './assets/config.js' — unlike cashier/kitchen, this
+     page needs CONFIG itself, because the legacy ?owneremails= bootstrap still writes
+     sl_config.ownerEmails client-side. That allowlist is SUPERSEDED: login.html is the
+     staff door and sql/07_staff_roster.sql (staff_session + roster_role_of) decides
+     role — see the boot gate. The SQL layer double-gates every owner RPC with
+     OWNER_SESSION_REQUIRED (sql/02_functions.sql), so this client check is a
+     courtesy, not the security boundary. JSON envelopes never throw; every
+     error code maps to one human line, never a stack trace.
+     ====================================================================== -->
+<script type="module">
+    import {
+        signIn, setSessionToken, staffSession, salesSummary, salesReport, turnoverStats, getMenu, getCategories,
+        createCategory, reorderCategories, deleteCategory, createMenuItem,
+        updateMenuItem, uploadImage, listActivePending, voidOrder, fmtPeso, fmtTime, fmtCountdown,
+        rosterList, rosterAdd, rosterSuspend, rosterReactivate, rosterMoveStation,
+        rosterResetPassword, signupAccount, newMemorablePassword,
+    } from './assets/api.js';
+    import { CONFIG } from './assets/config.js';
+
+    /* --- state ----------------------------------------------------------- */
+    let tab = 'sales';          // sales | turnover | menu | categories | roster
+    let sales = null;           // last salesSummary payload
+    let salesErr = null;        // error code from the last sales read
+    let salesGrain = 'daily';
+    let salesDays = 30;
+    /* --- period focus (items 7/9/10): the Sales tab could only re-RANGE, never
+       pick one day/month/year, so "what day do I want to see?" had no answer.
+       salesFocus holds a label EXACTLY as the server labels buckets ('YYYY-MM-DD'
+       | 'YYYY-MM' | 'YYYY') or null = the whole range. Labels come from
+       to_char(paid_at, fmt), which is the SERVER's timezone (Supabase PG runs UTC),
+       so every bound below is built with Date.UTC and ISO'd the same way — Date(y,
+       m, d) local would shift the window by the browser's offset and silently
+       drop the period's first hours. salesWindow remembers the from/to/grain that
+       was ACTUALLY read, so Export CSV exports exactly what the chart shows. */
+    let salesFocus = null;
+    let salesWindow = null;
+    /* Sweep 2 item 7: the Focus list is now OUR panel of chips rather than a
+       native <select>, so whether it is showing is OUR state — a repaint cannot
+       close it, which a browser popup could (see focusToggle below). */
+    let focusOpen = false;
+    /* Sweep: the menu builder, category and roster-role pickers were native
+       <select>s, unusable by tap in Chrome (see chipPicker). The current choice
+       is OUR page-level state in `pick` (picker key -> chosen option id), so a
+       repaint cannot lose it the way a browser popup could. */
+    const pick = new Map();
+    let turn = null;            // last turnoverStats payload
+    let turnErr = null;
+    let turnDays = 30;
+    let cats = [];              // categories, display_order asc
+    let items = [];             // menu items
+    let menuErr = null;
+    let claims = [];            // live unpaid claims (list_active_pending rows)
+    let claimsErr = null;
+    let armed = null;           // { orderId, code, until } — void two-step guard
+    let toast = null;           // {msg, until} — transient success line
+    let roster = [];            // staff_roster rows (roster_list), role then display_name
+    let rosterErr = null;       // error code from the last roster read
+    let oneTime = null;         // { kind, email, password } — shown ONCE, cleared on dismiss
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+    /* --- error copy: one human line per code, never a stack trace, never the
+         raw code string. */
+    const GATE_COPY = "Owner sign-in required — add ?email=&password= to this URL once.";
+    const AUTH_COPY = "Those credentials weren't accepted. Check the URL — nothing was stored.";
+    /* LEGACY copy for the CONFIG.ownerEmails allowlist — superseded by sql/07
+       roster_role_of. Kept so the commented gate below reads whole; nothing live uses it. */
+    const NOT_OWNER = "Not your dashboard. This account isn't on the owner list — the board stays closed.";
+    /* --- roster gate copy (Phase 8): the roster is the identity boundary. --- */
+    const NOT_ON_ROSTER = "This email is not on the staff roster — register through the owner who bootstrapped the system.";
+    const NOT_OWNER_STATION = "This staff member is not an owner — the owner surfaces need an owner station.";
+    const MENU_SYNC = "Done — menu.html picks this up on next load.";
+    const SIGNUP_FAIL = "The cafe could not create that account — check the email and try again.";
+    const ERR_COPY = {
+        OWNER_SESSION_REQUIRED: "The cafe didn't recognize you as an owner. Sign in with an owner account.",
+        PERMISSION_DENIED: "The cafe won't let this account do that.",
+        INVALID_GRAIN: "That time grain isn't supported — try daily, monthly or yearly.",
+        CATEGORY_NOT_FOUND: "That category isn't there any more — refresh and try again.",
+        INVALID_CATEGORY_NAME: "That category name is empty or too long — try a shorter one.",
+        INVALID_ORDER: "The new shelf order didn't take — refresh the list and try again.",
+        INVALID_FALLBACK: "Pick a different category for the items to move to, or say to delete them too.",
+        MENU_ITEM_IN_USE: "Those items are in past orders - the sales record would break. Move them to another category, or hide them.",
+        INVALID_ITEM_NAME: "That item name is empty or too long — keep it under 120 characters.",
+        INVALID_SIZES: "Every size line needs the form Small=120 — check the sizes and try again.",
+        MENU_ITEM_NOT_FOUND: "That item isn't on the menu any more — refresh and try again.",
+        ORDER_NOT_FOUND: "That claim isn't on the board any more — it was paid, voided, or its time ran out.",
+        NOT_VOIDABLE: "That claim isn't open any more — it's already paid or gone.",
+        MENU_ITEM_UNAVAILABLE: "That item isn't on the menu right now.",
+        /* --- roster codes (sql/07_staff_roster.sql) ------------------------- */
+        STAFF_NOT_REGISTERED: "This email is not on the staff roster — register through the owner who bootstrapped the system.",
+        NOT_OWNER: "Only an active owner may do that — this station can't reach the roster.",
+        ROSTER_NOT_FOUND: "That roster row isn't there any more — refresh the list and try again.",
+        ROSTER_EXISTS: "That email is already on the roster — pick a different email, or edit the existing row.",
+        INVALID_EMAIL: "That email isn't a valid email — check the spelling and try again.",
+        INVALID_DISPLAY_NAME: "That display name is empty or over 60 characters — keep it short.",
+        INVALID_ROLE: "That station isn't one the roster knows — pick cashier or kitchen.",
+        LAST_OWNER_ONLY: "That's the only active owner — promote another staff member to owner before demoting this one.",
+        /* --- Phase 9 tier + store codes (sql/08) ---------------------------- */
+        TIER_REQUIRED: "This branch is on the Starter plan — cashier and kitchen staff, and new menu items, need a Pro branch.",
+        MENU_LIMIT_REACHED: "This branch has reached its Starter menu limit — upgrade to Pro to keep adding items.",
+        STORE_CONTEXT_REQUIRED: "This owner session carries no branch — sign in again from the branch you manage.",
+        STORE_MISMATCH: "This owner's roster branch doesn't match its store token — sign in from the branch you manage.",
+        NETWORK: "We can't reach the cafe right now. Check your connection and try again.",
+        HTTP: "The cafe server had trouble with that request. Try again, and if it keeps happening tell the manager.",
+    };
+    const copyFor = (code) => ERR_COPY[code] ?? ERR_COPY.HTTP;
+
+    /* --- gate card: no session / wrong account = nothing renders --------- */
+    function renderGate(copy) {
+        document.getElementById('app').innerHTML =
+            `<div class="glass-card rounded-xl p-6 text-center my-6">
+               <p class="text-brand-accentLight text-sm font-semibold">${copy}</p>
+               <p class="text-brand-muted text-xs mt-2">Nothing on this dashboard loads until an owner session exists.</p>
+             </div>`;
+    }
+
+    /* --- live clock: HH:MM:SS on a 1s tick ------------------------------- */
+    const pad = (n) => String(n).padStart(2, '0');
+    const clockEl = document.getElementById('clock');
+    function tick() {
+        const d = new Date();
+        clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    /* --- helpers --------------------------------------------------------- */
+    function daysBackISO(n) { return new Date(Date.now() - n * 86400000).toISOString(); }
+    function fmtMMSS(secs) { return fmtCountdown(Math.floor(Number(secs) || 0)); }
+
+    /* --- tab bar: .nav-btn.active comes from assets/app.css --------------
+       Five tabs now: the strip already carries flex-wrap, so the row wraps
+       rather than shrinking — only the button padding drops a step (px-4 ->
+       px-3) to keep "Staff Roster" on one line at mobile widths. */
+    const TABS = [
+        { key: 'sales', label: 'Sales', icon: 'fa-chart-line' },
+        { key: 'turnover', label: 'Turnover', icon: 'fa-rotate' },
+        { key: 'menu', label: 'Menu', icon: 'fa-utensils' },
+        { key: 'categories', label: 'Categories', icon: 'fa-layered' },
+        { key: 'roster', label: 'Staff Roster', icon: 'fa-users' },
+    ];
+    function renderTabBar() {
+        const btns = TABS.map((t) => {
+            const active = t.key === tab ? ' nav-btn active' : ' nav-btn';
+            return `<button class="${active} rounded-xl whitespace-nowrap text-sm px-3 py-2" data-tab="${t.key}">
+                    <i class="fa-solid ${t.icon} mr-1"></i>${t.label}</button>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">${btns}</div>`;
+    }
+
+    /* --- TAB 1: sales ---------------------------------------------------- */
+    function renderBars(buckets) {
+        const max = Math.max(1, ...buckets.map((b) => Number(b.revenue ?? 0)));
+        const bars = buckets.map((b) => {
+            const pct = Math.max(4, Math.round((Number(b.revenue ?? 0) / max) * 100));
+            return `<div class="flex flex-col items-end justify-end text-center w-1/8 min-w-10 mx-1">
+                      <div class="bg-brand-accent rounded-t-md" style="height:${pct}%"></div>
+                      <span class="text-brand-muted text-xs mt-1 whitespace-nowrap">${esc(String(b.label ?? '').slice(0, 10))}</span>
+                    </div>`;
+        }).join('');
+        return `<div class="flex items-stretch h-44 overflow-x-auto">${bars}</div>`;
+    }
+
+    /* --- live unpaid claims panel (lives in the Sales tab, Tab 1) --------
+       Voiding is an OWNER-only decision (cashier.html:88 keeps the TTL as the
+       cashier's only removal path). void_order is fenced to pending_payment in
+       sql/02_functions.sql, so a paid order cannot be reached from here.
+       Two-step guard: first tap arms the row, the button re-renders as
+       "Confirm void", second tap executes. An arm older than 12 s is dropped,
+       so a half-finished thought can never fire later. */
+    function renderClaims() {
+        if (claimsErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(claimsErr)}</p></div>`;
+        }
+        if (!claims.length) {
+            return `<div class="glass-card rounded-xl p-3 my-4"><p class="text-brand-muted text-xs">No live claims right now — every unpaid order has either been paid or aged out.</p></div>`;
+        }
+        const rows = claims.map((c) => {
+            const secs = Number(c.seconds_remaining ?? 0);
+            const armedNow = armed && String(armed.orderId) === String(c.order_id ?? '');
+            const lastCall = secs < 120;
+            return `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3 flex-wrap ${armedNow ? 'outline outline-1 outline-brand-accentLight' : ''}" data-claim-row data-order-id="${esc(c.order_id ?? '')}" data-code="${esc(c.code ?? '')}">
+                    <span class="font-mono text-brand-accentLight text-lg whitespace-nowrap">${esc(c.code ?? '')}</span>
+                    <span class="text-brand-cream text-sm whitespace-nowrap ml-2">${esc(c.customer_name ?? '')}</span>
+                    <span class="font-mono text-brand-muted text-xs ml-2">${fmtTime(c.created_at)}</span>
+                    <span class="font-mono text-xs ml-2 ${lastCall ? 'text-brand-accentLight' : 'text-brand-muted'}">${fmtCountdown(secs)}</span>
+                    <span class="text-brand-muted text-xs ml-2">${Number(c.items_count ?? 0)} items · ${fmtPeso(c.total_amount)}</span>
+                    <button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-void>${armedNow ? 'Confirm void' : 'Void claim'}</button>
+                  </div>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Live unpaid claims — voiding deletes the row and its items</p>
+                ${rows}
+              </div>`;
+    }
+
+    function renderSales() {
+        const controls = `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">
+                <span class="text-brand-muted text-xs uppercase tracking-wider">Grain</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="daily">Daily</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="monthly">Monthly</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-grain="yearly">Yearly</button>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Range</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="7">7 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="30">30 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-days="365">365 days</button>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Focus</span>
+                ${focusToggle()}
+              </div>`;
+        if (!sales) {
+            const note = salesErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(salesErr)}</p>` : '';
+            return `${controls}${focusPanel()}${note}${renderClaims()}`;
+        }
+        const buckets = sales.buckets || [];
+        const exportBtn = `<button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-3" data-export>Export CSV</button>`;
+        return `${controls}${focusPanel()}
+            <div class="glass-card rounded-xl p-5 my-4">
+              <div class="flex items-center gap-6 flex-wrap">
+                <span class="font-mono text-brand-accentLight text-2xl">${fmtPeso(sales.revenue)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-3">Revenue</span>
+                <span class="font-mono text-brand-cream ml-4">${Number(sales.completed_count ?? 0)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Completed</span>
+                <span class="font-mono text-brand-cream ml-4">${fmtPeso(sales.aov)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Avg / order</span>
+              </div>
+              <p class="text-brand-muted text-xs mt-2">Window ${String(salesWindow.from).slice(0, 10)} → ${String(salesWindow.to).slice(0, 10)} · ${salesWindow.grain} bars · ${salesFocus ? `focused on ${esc(String(salesFocus))}` : 'the whole range'}</p>
+              <div class="mt-4">${renderBars(buckets)}</div>
+              ${exportBtn}
+            </div>${renderClaims()}`;
+    }
+
+    /* --- TAB 2: turnover ------------------------------------------------- */
+    function renderHeat(turnObj) {
+        const byHour = {};
+        (turnObj.peak_hours || []).forEach((h) => { byHour[Number(h.hour ?? -1)] = Number(h.orders ?? 0); });
+        const maxO = Math.max(1, ...Object.values(byHour));
+        const cells = [];
+        for (let h = 0; h < 24; h++) {
+            const v = byHour[h] || 0;
+            const op = 0.06 + 0.94 * (v / maxO);
+            cells.push(`<div class="flex flex-col items-center justify-center w-1/24 min-w-10 mx-px">
+                          <div class="h-8 rounded-sm bg-brand-accent flex items-center justify-center" style="opacity:${op.toFixed(2)}">
+                            <span class="text-brand-cream text-xs">${v || ''}</span>
+                          </div>
+                          <span class="text-brand-muted text-xs mt-1">${pad(h)}</span>
+                        </div>`);
+        }
+        return `<div class="glass-card rounded-xl p-3 my-4 overflow-x-auto flex items-stretch gap-1">${cells.join('')}</div>`;
+    }
+
+    function renderTurnover() {
+        const controls = `<div class="glass-card rounded-xl p-3 my-3 flex items-center gap-2 flex-wrap">
+                <span class="text-brand-muted text-xs uppercase tracking-wider">Range</span>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="7">7 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="30">30 days</button>
+                <button class="nav-btn rounded-lg px-3 py-1 text-xs" data-turn-days="365">365 days</button>
+              </div>`;
+        if (!turn) {
+            const note = turnErr ? `<p class="text-brand-accentLight text-sm mt-2">${copyFor(turnErr)}</p>` : '';
+            return `${controls}${note}`;
+        }
+        return `${controls}
+            <div class="glass-card rounded-xl p-5 my-4">
+              <div class="flex items-center gap-6 flex-wrap">
+                <span class="font-mono text-brand-cream text-2xl">${Number(turn.sample_size ?? 0)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Sampled orders</span>
+                <span class="font-mono text-brand-accentLight ml-4">${fmtMMSS(turn.avg_fulfillment_seconds)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">Avg fulfilment</span>
+                <span class="font-mono text-brand-accentLight ml-4">${fmtMMSS(turn.p95_fulfillment_seconds)}</span>
+                <span class="text-brand-muted text-xs uppercase tracking-wider ml-2">P95</span>
+              </div>
+              <p class="text-brand-muted text-xs mt-2">Busiest hours (orders per hour-of-day):</p>
+              <div class="mt-3">${renderHeat(turn)}</div>
+            </div>`;
+    }
+
+    /* --- TAB 3: menu ----------------------------------------------------- */
+    /* Sweep: native <select>s are unusable by tap in Chrome — a styled <select>
+       draws its own popup that opens on mousedown and closes on mouseup, so one
+       tap flashes the list and selects nothing (and on a phone the picker is
+       OS-coloured, dark-on-dark). Same defect the Sales Focus tab had, fixed the
+       same way: the options are OUR DOM chips and the current choice is OUR
+       page-level state in `pick`, so a repaint cannot lose it. Tapping a chip
+       sets the choice; the chosen chip is filled AND carries aria-current, so
+       selection is never conveyed by colour alone. */
+    function chipPicker(key, options) {
+        const chosen = pick.get(key);
+        const chips = options.map((o) => {
+            const on = chosen === o.id;
+            const cls = `nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap${on ? ' bg-brand-accent/30 border border-brand-accent' : ''}`;
+            const aria = on ? ' aria-current="true"' : '';
+            return `<button class="${cls}" data-pick="${key}" data-pick-id="${esc(o.id)}"${aria}>${esc(o.label)}</button>`;
+        }).join('');
+        return `<div class="flex gap-2 flex-wrap">${chips}</div>`;
+    }
+
+    function renderItemCard(it) {
+        const sizes = (it.sizes_and_prices || []).map((s) =>
+            `<span class="text-brand-muted text-xs whitespace-nowrap mr-2">${esc(String(s.size ?? ''))} ${fmtPeso(s.price)}</span>`).join('');
+        const off = it.is_available ? '' : `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap text-xs">Hidden</span>`;
+        return `<div class="glass-card rounded-xl p-4 my-3" data-menu-item data-item-id="${esc(it.id ?? '')}">
+                <p class="text-brand-cream text-base font-serif whitespace-nowrap">${esc(it.name ?? '')}</p>
+                ${it.description ? `<p class="text-brand-muted text-xs mt-1">${esc(it.description)}</p>` : ''}
+                <div class="flex items-center gap-3 flex-wrap mt-2">${sizes}${off}</div>
+              </div>`;
+    }
+
+    function renderMenu() {
+        if (menuErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(menuErr)}</p></div>`;
+        }
+        const groups = cats.map((c) => {
+            const own = items.filter((it) => String(it.category_id) === String(c.id));
+            if (!own.length) return `<p class="text-brand-muted text-xs mt-1">No items in ${esc(c.name ?? '')} yet.</p>`;
+            return `<p class="text-brand-accent text-xs uppercase tracking-wider mt-3">${esc(c.name ?? '')}</p>${own.map(renderItemCard).join('')}`;
+        }).join('');
+        const addForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an item</p>
+                ${chipPicker('add-cat', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })))}
+                <input data-add-name type="text" placeholder="Item name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
+                <input data-add-desc type="text" placeholder="Description (optional)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <textarea data-add-sizes placeholder="Small=120&#10;Large=150" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
+                ${chipPicker('add-avail', [{ id: 'Available', label: 'Available' }, { id: 'Hidden', label: 'Hidden' }])}
+                <input data-add-photo type="file" accept="image/*" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-add-item>Add item</button>
+              </div>`;
+        const editForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Edit an item (blank = keep)</p>
+                ${chipPicker('edit-item', items.map((it) => ({ id: String(it.id), label: it.name ?? '' })))}
+                <input data-edit-name type="text" placeholder="New name (blank = keep)" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-2 w-full box-content">
+                <input data-edit-desc type="text" placeholder="New description (blank = keep)" class="rounded-lg p-2 text-xs text-brand-muted bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <textarea data-edit-sizes placeholder="Small=120&#10;Large=150 (blank = keep)" class="rounded-lg p-2 text-xs font-mono bg-brand-card/60 border border-brand-border mt-1 w-full box-content"></textarea>
+                ${chipPicker('edit-avail', [{ id: 'Keep', label: 'Keep availability' }, { id: 'Available', label: 'Make available' }, { id: 'Hidden', label: 'Make hidden' }])}
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-edit-item-go>Save edits</button>
+              </div>`;
+        return `${groups || '<p class="text-brand-muted text-sm mt-2">The menu is empty right now.</p>'}${addForm}${editForm}`;
+    }
+
+    /* --- TAB 4: categories ----------------------------------------------- */
+    function renderCategories() {
+        if (menuErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(menuErr)}</p></div>`;
+        }
+        const rows = cats.map((c) => `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3" data-cat-row data-cat-id="${esc(c.id ?? '')}">
+                <span class="font-mono text-brand-muted text-xs mr-2">${Number(c.display_order ?? 0)}</span>
+                <span class="text-brand-cream text-sm font-serif whitespace-nowrap">${esc(c.name ?? '')}</span>
+                <button class="rounded-lg px-2 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-up>Up</button>
+                <button class="rounded-lg px-2 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream" data-move-down>Down</button>
+              </div>`).join('');
+        const delForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Delete a category — move items to which category?</p>
+                ${chipPicker('del-cat', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })))}
+                ${chipPicker('del-fallback', cats.map((c) => ({ id: String(c.id), label: c.name ?? '' })).concat([{ id: 'DROP', label: 'Delete items too' }]))}
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-delete-cat>Delete category</button>
+              </div>`;
+        const createForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">New category</p>
+                <input data-new-cat-name type="text" placeholder="Category name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm mt-2" data-create-cat>Create</button>
+              </div>`;
+        return `${rows || '<p class="text-brand-muted text-sm mt-2">No categories yet.</p>'}${createForm}${delForm}`;
+    }
+
+    /* --- TAB 5: staff roster (sql/07_staff_roster.sql is the identity source)
+       Rows come from roster_list, already ordered role then display_name. The
+       page is owner-gated at boot, so row actions are owner-only BY
+       CONSTRUCTION; every roster_* RPC re-gates server-side (roster_role_of ->
+       NOT_OWNER), so a hand-crafted tap still lands in a refusal.
+       One-time cards: a reset temp password and a new employee's password are
+       rendered ONCE and cleared on dismiss. Single-tap here, unlike the Tab-1
+       void two-step — a password is not a deletion, there is nothing to undo,
+       and the value only ever exists in this render, so the guard is "shown
+       once, never re-rendered" rather than an arm/confirm round trip. Nothing
+       is stored anywhere; GoTrue holds the credential, the roster never does. */
+    const ROLE_ICON = { cashier: 'fa-cash-register', kitchen: 'fa-utensils', owner: 'fa-user' };
+    const ROLE_LABEL = { cashier: 'Cashier', kitchen: 'Kitchen', owner: 'Owner' };
+
+    function renderRosterRow(r) {
+        const role = String(r.role ?? '');
+        const isOwner = role === 'owner';
+        const active = r.active === true || String(r.active) === 'true';
+        const icon = ROLE_ICON[role] ?? 'fa-user';
+        const label = ROLE_LABEL[role] ?? 'Staff';
+        const seen = r.last_seen_at ? fmtTime(r.last_seen_at) : 'never';
+        /* staff rows move between stations; owner rows promote/demote, and the
+           SQL layer refuses demoting the last active owner with LAST_OWNER_ONLY. */
+        const stationBtns = isOwner
+            ? `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-promote>Promote</button>
+                   <button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-demote>Demote</button>`
+            : `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-move data-move-role="cashier">Move to Cashier</button>
+                   <button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-move data-move-role="kitchen">Move to Kitchen</button>`;
+        const toggleBtn = (active
+            ? `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-suspend>Suspend</button>`
+            : `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-reactivate>Reactivate</button>`);
+        const resetBtn = `<button class="rounded-lg px-3 py-1 text-xs min-h-[48px] bg-brand-card/60 border border-brand-border text-brand-cream whitespace-nowrap" data-roster-reset>Reset password</button>`;
+        return `<div class="glass-card rounded-xl p-3 my-2 flex items-center gap-3 flex-wrap${active ? '' : ' opacity-60'}" data-roster-row data-roster-id="${esc(r.id ?? '')}">
+                <span class="text-brand-cream text-sm font-semibold whitespace-nowrap">${esc(r.display_name ?? '')}</span>
+                <span class="font-mono text-brand-muted text-xs ml-2">${esc(r.email ?? '')}</span>
+                <span class="rounded-md px-2 py-1 text-xs whitespace-nowrap ${isOwner ? 'text-brand-accent' : 'text-brand-muted'}"><i class="fa-solid ${icon} mr-1"></i>${label}</span>
+                ${active ? '' : `<span class="status-lastcall rounded-md px-2 py-1 whitespace-nowrap text-xs">Suspended</span>`}
+                <span class="font-mono text-brand-muted text-xs ml-2">seen ${seen}</span>
+                ${toggleBtn}${stationBtns}${resetBtn}
+              </div>`;
+    }
+
+    function renderOneTimeCard() {
+        if (!oneTime) return '';
+        const added = oneTime.kind === 'added';
+        const lead = added
+            ? `New employee ${oneTime.email} — copy this password across to them:`
+            : `Temporary password for ${oneTime.email}:`;
+        const note = added
+            ? 'Copy it to the clipboard and send it — it appears once, and the roster holds no password.'
+            : 'Hand it over, then have them change it on first login.';
+        return `<div class="glass-card rounded-xl p-4 my-4 text-center" data-one-time-card>
+                <p class="text-brand-accentLight text-sm font-semibold">${esc(lead)}</p>
+                <p class="font-mono text-brand-cream text-lg mt-2">${esc(oneTime.password)}</p>
+                <p class="text-brand-muted text-xs mt-2">${esc(note)}</p>
+                <p class="text-brand-muted text-xs mt-1">Tap this card to close it — the value is never re-rendered.</p>
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-3" data-one-time-dismiss>Dismiss it</button>
+              </div>`;
+    }
+
+    function renderRoster() {
+        if (rosterErr) {
+            return `<div class="glass-card rounded-xl p-4 my-4"><p class="text-brand-accentLight text-sm">${copyFor(rosterErr)}</p></div>`;
+        }
+        const rows = roster.map(renderRosterRow).join('');
+        const head = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Staff roster — role and station live in sql/07, not in the browser</p>
+                ${rows || '<p class="text-brand-muted text-xs mt-1">No roster rows yet — the bootstrap owner seeds the first one.</p>'}
+              </div>`;
+        const addForm = `<div class="glass-card rounded-xl p-4 my-4">
+                <p class="text-brand-accent text-xs uppercase tracking-wider mb-2">Add an employee — the cafe account and the roster row are created as a pair</p>
+                <input data-add-emp-name type="text" placeholder="Display name" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                <input data-add-emp-email type="text" placeholder="Email" spellcheck="false" autocomplete="off" class="rounded-lg p-2 text-sm text-brand-cream bg-brand-card/60 border border-brand-border mt-1 w-full box-content">
+                ${chipPicker('add-emp-role', [{ id: 'Cashier', label: 'Cashier' }, { id: 'Kitchen', label: 'Kitchen' }])}
+                <button class="btn-primary rounded-xl whitespace-nowrap text-sm min-h-[48px] mt-2" data-add-emp>Add employee</button>
+              </div>`;
+        return `${head}${addForm}${renderOneTimeCard()}`;
+    }
+
+    function renderToast() {
+        if (!toast || Date.now() >= toast.until) return '';
+        return `<div class="glass-card rounded-xl p-3 my-3 text-center">
+                <p class="text-brand-accentLight text-sm font-semibold">${toast.msg}</p>
+              </div>`;
+    }
+
+    function paint() {
+        const body = tab === 'sales' ? renderSales()
+                   : tab === 'turnover' ? renderTurnover()
+                   : tab === 'menu' ? renderMenu()
+                   : tab === 'categories' ? renderCategories()
+                   : renderRoster();
+        document.getElementById('app').innerHTML = renderTabBar() + renderToast() + body;
+    }
+
+    /* --- reads ----------------------------------------------------------- */
+    /* --- window: whole range, or one focused period ------------------------
+       Focusing narrows the window AND drops the grain one step, so the bars show
+       the breakdown INSIDE what was picked: pick a day -> that day, pick a month
+       -> its days, pick a year -> its months. The headline numbers then answer
+       for the picked period alone, which is what the owner asked for. */
+    function focusWindow(grain, focus) {
+        if (!focus) return { from: daysBackISO(salesDays), to: new Date().toISOString(), grain: grain };
+        const f = String(focus);
+        const y = Number(f.slice(0, 4));
+        const mo = f.length >= 7 ? Number(f.slice(5, 7)) : 1;
+        const d = f.length >= 10 ? Number(f.slice(8, 10)) : 1;
+        const start = (grain === 'daily') ? Date.UTC(y, mo - 1, d)
+            : (grain === 'monthly' ? Date.UTC(y, mo - 1, 1) : Date.UTC(y, 0, 1));
+        const end = (grain === 'daily') ? start + 86400000
+            : (grain === 'monthly' ? Date.UTC(y, mo, 1) : Date.UTC(y + 1, 0, 1));
+        const finer = (grain === 'yearly') ? 'monthly' : 'daily';
+        return { from: new Date(start).toISOString(), to: new Date(end - 1000).toISOString(), grain: finer };
+    }
+    /* Labels offered in the dropdown are generated from the calendar in UTC, never
+       from the buckets on screen — a bucket that happens to be empty must still be
+       selectable (it answers with nothing, which is honest), and re-deriving the
+       options from a finer-grain repaint would make the list jump around. */
+    function focusLabels() {
+        const now = Date.now();
+        if (salesGrain === 'daily') {
+            const n = Math.min(salesDays, 31);
+            const out = [];
+            for (let i = n - 1; i >= 0; i--) {
+                const d = new Date(now - i * 86400000);
+                out.push(`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`);
+            }
+            return out;
+        }
+        if (salesGrain === 'monthly') {
+            const out = [];
+            const s = new Date(now - salesDays * 86400000), e = new Date(now);
+            let y = s.getUTCFullYear(), m = s.getUTCMonth();
+            while (out.length < 25 && (y < e.getUTCFullYear() || (y === e.getUTCFullYear() && m <= e.getUTCMonth()))) {
+                out.push(`${y}-${pad(m + 1)}`);
+                m++; if (m > 11) { m = 0; y++; }
+            }
+            return out;
+        }
+        const out = [];
+        const sy = new Date(now - salesDays * 86400000).getUTCFullYear();
+        for (let yy = sy; yy <= new Date(now).getUTCFullYear(); yy++) out.push(String(yy));
+        return out;
+    }
+    /* Sweep 2 item 7 ("when im clicking focus, it open and closes without me
+       being able to choose"): the control was a native <select>. Once a <select>
+       is styled — ours carries rounded-lg, a background and a border — Chrome
+       stops drawing the OS picker and renders its own dropdown as a popup that
+       OPENS ON MOUSEDOWN AND CLOSES ON MOUSEUP. One tap therefore flashes the
+       list and selects nothing, which is the reported symptom; on a phone it is
+       worse, since the picker is painted with OS colors and the options come out
+       dark-on-dark. The list is therefore ours: tapping Focus opens a panel of
+       chips that STAYS open until a period is tapped or Focus is tapped again,
+       every chip a 48px thumb target carrying the same data-focus-label the
+       handler already reads. The panel is ordinary DOM, so repainting the Sales
+       tab cannot close it the way a browser popup could.
+       The labels themselves are unchanged — still focusLabels(), still calendar-
+       generated in UTC, so an empty period stays selectable. */
+    function focusToggle() {
+        const word = (salesGrain === 'daily') ? 'days' : (salesGrain === 'monthly' ? 'months' : 'years');
+        const label = salesFocus ? `Focused on ${esc(String(salesFocus))}` : `Focus all ${word}`;
+        return `<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap" data-focus-toggle>${label}<i class="fa-solid fa-chevron-down ml-1 text-xs"></i></button>`;
+    }
+    function focusPanel() {
+        if (!focusOpen) return '';
+        const chips = focusLabels().map((l) => {
+            const on = String(l) === String(salesFocus);
+            /* the period already in focus wears a filled chip, so the owner can
+               see what is filtered without reading the window line back */
+            return `<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap${on ? ' bg-brand-accent/30 border border-brand-accent' : ''}" data-focus-label="${esc(l)}">${esc(l)}</button>`;
+        }).join('');
+        return `<div class="glass-card rounded-xl p-3 my-3">
+                <p class="text-brand-muted text-xs uppercase tracking-wider mb-2">Tap one period — the chart then shows that period broken down</p>
+                <div class="flex gap-2 flex-wrap">${chips}<button class="nav-btn rounded-lg px-3 py-2 min-h-[48px] text-xs whitespace-nowrap" data-focus-toggle>Close focus</button></div>
+              </div>`;
+    }
+    async function loadSales() {
+        salesWindow = focusWindow(salesGrain, salesFocus);
+        const res = await salesSummary(salesWindow.from, salesWindow.to, salesWindow.grain);
+        if (!res.success) { salesErr = res.error?.code ?? 'HTTP'; sales = null; return; }
+        salesErr = null;
+        sales = res.data || {};
+    }
+    async function loadTurnover() {
+        const res = await turnoverStats(daysBackISO(turnDays), new Date().toISOString());
+        if (!res.success) { turnErr = res.error?.code ?? 'HTTP'; turn = null; return; }
+        turnErr = null;
+        turn = res.data || {};
+    }
+    async function loadMenu() {
+        const c = await getCategories();
+        if (!c.success) { menuErr = c.error?.code ?? 'HTTP'; return; }
+        const m = await getMenu();
+        if (!m.success) { menuErr = m.error?.code ?? 'HTTP'; return; }
+        menuErr = null;
+        cats = c.data || [];
+        items = m.data || [];
+        cats.sort((a, b) => Number(a.display_order ?? 0) - Number(b.display_order ?? 0));
+    }
+    async function loadClaims() {
+        const res = await listActivePending();
+        if (!res.success) { claimsErr = res.error?.code ?? 'HTTP'; claims = []; return; }
+        claimsErr = null;
+        claims = res.data || [];
+        claims.sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+    }
+    /* roster_list is OWNER-gated: an anon or non-owner caller answers
+       OWNER_SESSION_REQUIRED / NOT_OWNER, and copyFor turns each into its own
+       human line — never the raw code, never a stack. */
+    async function loadRoster() {
+        const res = await rosterList();
+        if (!res.success) { rosterErr = res.error?.code ?? 'HTTP'; roster = []; return; }
+        rosterErr = null;
+        roster = res.data || [];
+    }
+
+    function say(msg) { toast = { msg, until: Date.now() + 6000 }; }
+
+    /* --- CSV export: the ROWS behind what is on screen, not the headline -----
+       sales_report (sql/02_functions.sql) answers the SAME window the tab just
+       read, so a download always matches the chart. One grain-appropriate table
+       per export, which is what each tab asks:
+         daily   -> one row per completed sale: who, when the cashier took the
+                     payment, when the kitchen served it, the turnaround between
+                     those two (paid_at -> served_at), the cups, the line items
+                     with quantities, and the cash received.
+         monthly -> one row per DAY inside the month: cups and cash.
+         yearly  -> one row per MONTH inside the year: cups and cash.
+       Completed sales only — an abandoned claim left zero trace by design (TTL
+       DELETE) and a paid-but-never-served order is still open. The SQL layer
+       never builds display strings, so the item text is joined HERE. */
+    function csvField(v) {
+        const s = String(v ?? '');
+        return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    function itemsField(items) {
+        return (items || []).map((it) =>
+            `${Number(it.quantity ?? 0)}x ${String(it.item_name ?? '')} (${String(it.size ?? '')})`).join(' + ');
+    }
+    /* The CSV does not follow the CHART grain, it follows the grain the owner
+       SELECTED (salesGrain, which is also the level of whatever Focus label is
+       picked). sales_report answers one level finer than the grain it is handed,
+       so: daily -> one row per sale (name, items with qty, cash, turnaround);
+       monthly -> one row per DAY inside the window (cups + cash per day);
+       yearly  -> one row per MONTH inside the window. Focusing a month therefore
+       exports that month day-by-day even though the bars drill down to days —
+       the chart shows the shape, the file gives the totals the owner asked for. */
+    async function exportCsv() {
+        if (!salesWindow) { say('Nothing has been read to export yet.'); return paint(); }
+        const rep = await salesReport(salesWindow.from, salesWindow.to, salesGrain);
+        if (!rep.success) { say(copyFor(rep.error?.code ?? 'HTTP')); return paint(); }
+        const d = rep.data || {};
+        const rows = d.rows || [];
+        if (!rows.length) { say('That window has no completed sales to export.'); return paint(); }
+        const grain = String(d.grain ?? salesWindow.grain);
+        const lines = [];
+        if (grain === 'daily') {
+            lines.push('code,customer_name,paid_at,served_at,turnaround_hhmm,turnaround_seconds,cups,items,cash_received');
+            rows.forEach((r) => lines.push([
+                String(r.code ?? ''), String(r.customer_name ?? ''), String(r.paid_at ?? ''), String(r.served_at ?? ''),
+                fmtMMSS(r.turnaround_seconds), String(Number(r.turnaround_seconds ?? 0)),
+                String(Number(r.cups ?? 0)), itemsField(r.items), String(Number(r.cash_received ?? 0)),
+            ].map(csvField).join(',')));
+        } else {
+            lines.push(grain === 'monthly' ? 'day,cups,cash_received,orders' : 'month,cups,cash_received,orders');
+            rows.forEach((r) => lines.push([
+                String(r.label ?? ''), String(Number(r.cups ?? 0)), String(Number(r.cash_received ?? 0)), String(Number(r.orders ?? 0)),
+            ].map(csvField).join(',')));
+        }
+        const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `sleepless-sales-${grain}-${salesFocus ? String(salesFocus) : new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        say('CSV saved to your downloads.');
+        paint();
+    }
+
+    /* --- menu actions ---------------------------------------------------- */
+    function parseSizes(text) {
+        const out = [];
+        for (const line of String(text ?? '').split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq < 0) continue;
+            const label = line.slice(0, eq).trim();
+            const price = Number(line.slice(eq + 1));
+            if (label && Number.isFinite(price)) out.push({ size: label, price });
+        }
+        return out;
+    }
+    /* The pickers are DOM chips now (see chipPicker), so the chosen option is
+       read from `pick` rather than a native select's .value — no dead helper. */
+
+    async function addItem() {
+        const catId = pick.get('add-cat');
+        const name = (document.querySelector('[data-add-name]')?.value ?? '').trim();
+        if (!catId || !name) { say('Pick a category and type an item name first.'); return paint(); }
+        const desc = document.querySelector('[data-add-desc]')?.value ?? '';
+        const sizes = parseSizes(document.querySelector('[data-add-sizes]')?.value);
+        const avail = (pick.get('add-avail') ?? 'Available') !== 'Hidden';
+        let imgUrl = null;
+        const photoInput = document.querySelector('[data-add-photo]');
+        const file = photoInput ? photoInput.files[0] : null;
+        if (file) {
+            const buf = await file.arrayBuffer();
+            const up = await uploadImage(file.name, new Uint8Array(buf), file.type || 'image/jpeg');
+            if (!up.success) { say(copyFor(up.error?.code ?? 'HTTP')); return paint(); }
+            imgUrl = up.data;
+        }
+        const res = await createMenuItem(catId, name, desc, imgUrl, sizes, avail);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    async function editItem() {
+        const id = pick.get('edit-item');
+        if (!id) { say('Pick the item to edit first.'); return paint(); }
+        const name = document.querySelector('[data-edit-name]')?.value ?? '';
+        const desc = document.querySelector('[data-edit-desc]')?.value ?? '';
+        const sizesRaw = (document.querySelector('[data-edit-sizes]')?.value ?? '').trim();
+        const sizes = sizesRaw ? parseSizes(sizesRaw) : null;
+        const availText = pick.get('edit-avail') ?? 'Keep';
+        const avail = availText === 'Keep' ? null : availText === 'Available';
+        const res = await updateMenuItem(id, name, desc, null, sizes, avail);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* --- category actions ------------------------------------------------ */
+    async function moveCategory(catId, dir) {
+        const idx = cats.findIndex((c) => String(c.id) === String(catId));
+        const swap = dir === 'up' ? idx - 1 : idx + 1;
+        if (idx < 0 || swap < 0 || swap >= cats.length) { say('Already at that end.'); return paint(); }
+        const next = cats.slice();
+        [next[idx], next[swap]] = [next[swap], next[idx]];
+        const res = await reorderCategories(next.map((c) => c.id));
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* doCreateCategory / doDeleteCategory: the `do` prefix keeps these local
+       names clear of the imported api.js bindings of the same SQL function. */
+    async function doCreateCategory() {
+        const name = (document.querySelector('[data-new-cat-name]')?.value ?? '').trim();
+        if (!name) { say('Type a category name first.'); return paint(); }
+        const end = cats.reduce((m, c) => Math.max(m, Number(c.display_order ?? 0)), 0) + 1;
+        const res = await createCategory(name, end);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    async function doDeleteCategory() {
+        const catId = pick.get('del-cat');
+        if (!catId) { say('Pick the category to delete first.'); return paint(); }
+        const fb = pick.get('del-fallback');
+        /* "Delete items too" is the DROP chip — it maps to a null fallback, so
+           the SQL layer removes the items as well. */
+        const fallback = fb === 'DROP' ? null : fb;
+        if (String(fallback ?? '') === String(catId)) { say("Can't move items into the category being deleted."); return paint(); }
+        const res = await deleteCategory(catId, fallback);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(MENU_SYNC);
+        await loadMenu();
+        paint();
+    }
+
+    /* --- void a live claim (owner-only; two-step confirm) ---------------
+       doVoid is fenced server-side: void_order matches status='pending_payment'
+       only, so a paid / preparing / served order returns NOT_VOIDABLE and the
+       row is untouched. Nothing here invents an id — it comes from the row. */
+    async function doVoid(orderId, code) {
+        if (!orderId) { say('Pick the claim to void first.'); return paint(); }
+        if (!(armed && String(armed.orderId) === String(orderId))) {
+            armed = { orderId, code, until: Date.now() + 12000 };
+            say(`Void drops claim ${code} and its items for good. Tap "Confirm void" again to do it.`);
+            return paint();
+        }
+        armed = null;
+        const res = await voidOrder(orderId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); await loadClaims(); return paint(); }
+        say(`Claim ${code} voided — the row and its items are gone.`);
+        await loadClaims();
+        paint();
+    }
+
+    /* --- roster actions (Tab 5). The `do` prefix keeps these names clear of
+         the imported api.js bindings of the same SQL function. Every one
+         re-reads the roster after a success so the cards show the truth, and
+         every failure lands in copyFor — LAST_OWNER_ONLY included. */
+    async function doRosterSuspend(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterSuspend(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Suspended — that station is closed until it is reactivated.');
+        await loadRoster();
+        paint();
+    }
+    async function doRosterReactivate(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterReactivate(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Reactivated — the station opens again on their next sign-in.');
+        await loadRoster();
+        paint();
+    }
+    async function doRosterMove(rosterId, role) {
+        if (!rosterId || !role) { say('Pick the row and the station first.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, role);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say(role === 'kitchen' ? 'Moved to the kitchen — they now stand at the pass.'
+                               : 'Moved to the register — they now stand at the till.');
+        await loadRoster();
+        paint();
+    }
+    /* Promote on an owner row is a client-side no-op: the row is already an
+       owner, so there is nothing to ask of the cafe. A staff row never shows
+       this button, but the guard below keeps a stale DOM honest. */
+    async function doRosterPromote(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const row = roster.find((r) => String(r.id) === String(rosterId));
+        if (row && String(row.role ?? '') === 'owner') { say('Already an owner — nothing to promote.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, 'owner');
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Promoted — that row now holds an owner station.');
+        await loadRoster();
+        paint();
+    }
+    /* Demote is the dangerous one: sql/07 refuses demoting the only active
+       owner with LAST_OWNER_ONLY, and that refusal is surfaced verbatim as its
+       own copy line — the owner is never left without a station. */
+    async function doRosterDemote(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterMoveStation(rosterId, 'cashier');
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        say('Demoted — that row now stands at the register.');
+        await loadRoster();
+        paint();
+    }
+    /* Single-tap, no arm/confirm: nothing is destroyed here, a password is
+       handed over. The guard is that the temp exists only in this render —
+       the card is dismissed and the value is gone. */
+    async function doRosterReset(rosterId) {
+        if (!rosterId) { say('Tap a row first.'); return paint(); }
+        const res = await rosterResetPassword(rosterId);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        const d = res.data || {};
+        oneTime = { kind: 'reset', email: String(d.email ?? ''), password: String(d.temp_password ?? '') };
+        paint();
+    }
+    /* PAIRING RULE (assets/api.js comment on signupAccount): the auth identity
+       and the roster row are created as a pair, so rosterAdd is attempted ONLY
+       after signupAccount succeeded. If signup fails, the roster row is never
+       attempted — a half-paired employee cannot exist. (The reverse orphan —
+       signup ok, roster_add refused — leaves an auth identity with no roster
+       row, which is inert: login.html and staff_session both refuse it.) */
+    /* Phase 9: this branch's plan tier, read from staff_session() at boot.
+       Starter branches cannot add cashier/kitchen staff — gate BEFORE signup so
+       no orphan auth identity is created. Tier is never self-served (sql/08). */
+    let ownerTier = '';
+    async function doAddEmployee() {
+        const name = (document.querySelector('[data-add-emp-name]')?.value ?? '').trim();
+        const email = (document.querySelector('[data-add-emp-email]')?.value ?? '').trim();
+        const role = (pick.get('add-emp-role') ?? 'Cashier') === 'Kitchen' ? 'kitchen' : 'cashier';
+        if (!name || !email) { say('Type a display name and an email first.'); return paint(); }
+        if (role !== 'owner' && ownerTier !== 'pro') {
+            say(ERR_COPY.TIER_REQUIRED); return paint();
+        }
+        const pwRes = await newMemorablePassword();
+        if (!pwRes.success) { say(copyFor(pwRes.error?.code ?? 'HTTP')); return paint(); }
+        const pw = String(pwRes.data ?? '');
+        if (!pw) { say('The cafe could not generate a password. Try again.'); return paint(); }
+        const up = await signupAccount(email, pw);
+        if (!up.success) {
+            say(up.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : SIGNUP_FAIL);
+            return paint();   // pairing rule: no auth identity, so no roster row
+        }
+        /* autoconfirm is OFF in this project (MASTER_PLAN §4a), so a 2xx signup
+           can still mean "identity created but not confirmed" — that identity
+           cannot sign in, so the roster row is not added either. GoTrue's own
+           wording is never rendered; this is the page's line for that outcome. */
+        if (up.data?.action_confirmation === 'signup_email' || !up.data?.user) {
+            say('The cafe wants that email confirmed before the account can sign in — the roster row was not added. Have them confirm the email, then add them again.');
+            return paint();   // pairing rule still holds: no usable identity, no row
+        }
+        const res = await rosterAdd(email, name, role, pw);
+        if (!res.success) { say(copyFor(res.error?.code ?? 'HTTP')); return paint(); }
+        oneTime = { kind: 'added', email, password: pw };
+        say(`${name} is on the roster at the ${role === 'kitchen' ? 'kitchen' : 'register'} station.`);
+        await loadRoster();
+        paint();
+    }
+
+    /* --- event wiring (delegated, keyed by data-*, so repainting cards
+         never loses handlers) ------------------------------------------- */
+    document.addEventListener('click', (e) => {
+        const t = e.target;
+        if (armed && Date.now() >= armed.until) armed = null;   // stale arm never fires
+        if (t.dataset.tab !== undefined) { tab = t.dataset.tab; paint(); }
+        /* A grain change or a re-range invalidates a focus label (the labels
+           belong to a grain and a window), so focus resets — silently and
+           without a stale filter quietly still narrowing the next read. */
+        /* A grain change or a re-range invalidates a focus label (the labels
+           belong to a grain and a window), so focus resets — silently and
+           without a stale filter quietly still narrowing the next read. The open
+           panel resets with it, since the chips on screen belong to the OLD
+           grain and would otherwise be a list of labels that no longer exist. */
+        else if (t.dataset.grain !== undefined) { salesGrain = t.dataset.grain; salesFocus = null; focusOpen = false; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.days !== undefined) { salesDays = Number(t.dataset.days); salesFocus = null; focusOpen = false; void (async () => { await Promise.all([loadSales(), loadClaims()]); paint(); })(); }
+        else if (t.dataset.focusLabel !== undefined) {
+            salesFocus = t.dataset.focusLabel || null;
+            focusOpen = false;   /* the choice is made, so the panel folds away */
+            void (async () => { await loadSales(); paint(); })();
+        }
+        else if (t.dataset.focusToggle !== undefined) {
+            /* opening/closing the panel is a paint, not a read — nothing about
+               the numbers changes until a chip is actually tapped. */
+            focusOpen = !focusOpen;
+            paint();
+        }
+        /* Tapping a picker chip records the choice in page-level state and
+           repaints so the chosen chip shows filled + aria-current. */
+        else if (t.dataset.pick !== undefined) { pick.set(t.dataset.pick, t.dataset.pickId); paint(); }
+        else if (t.dataset.export !== undefined) void exportCsv();
+        else if (t.dataset.turnDays !== undefined) { turnDays = Number(t.dataset.turnDays); void (async () => { await loadTurnover(); paint(); })(); }
+        else if (t.dataset.addItem !== undefined) void addItem();
+        else if (t.dataset.editItemGo !== undefined) void editItem();
+        else if (t.dataset.moveUp !== undefined || t.dataset.moveDown !== undefined) {
+            const row = t.closest('[data-cat-row]');
+            if (row) void moveCategory(row.dataset.catId, t.dataset.moveUp !== undefined ? 'up' : 'down');
+        }
+        else if (t.dataset.createCat !== undefined) void doCreateCategory();
+        else if (t.dataset.deleteCat !== undefined) void doDeleteCategory();
+        else if (t.dataset.void !== undefined) {
+            const row = t.closest('[data-claim-row]');
+            if (row) void doVoid(row.dataset.orderId, row.dataset.code ?? '');
+        }
+        else if (t.dataset.rosterSuspend !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterSuspend(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterReactivate !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterReactivate(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterMove !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterMove(row.dataset.rosterId, t.dataset.moveRole);
+        }
+        else if (t.dataset.rosterPromote !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterPromote(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterDemote !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterDemote(row.dataset.rosterId);
+        }
+        else if (t.dataset.rosterReset !== undefined) {
+            const row = t.closest('[data-roster-row]');
+            if (row) void doRosterReset(row.dataset.rosterId);
+        }
+        else if (t.dataset.addEmp !== undefined) void doAddEmployee();
+        else if (t.dataset.oneTimeDismiss !== undefined) { oneTime = null; say('Closed — that password is gone from the screen.'); paint(); }
+        /* any other tap on the one-time card dismisses it too: the temp was
+           shown once, and a second look at the same card must not keep it up */
+        else if (t.closest('[data-one-time-card]')) { oneTime = null; paint(); }
+    });
+
+    /* --- boot: auth gate first, THEN the roster gate. login.html is the staff
+         door (credentials typed there, never read from a URL); sql/07_staff_roster.sql
+         decides role — staff_session() + roster_role_of are the identity boundary and
+         the SQL layer re-gates every owner/roster RPC anyway. The password is never
+         rendered, logged, or echoed — only the signed-in email. ----------------- */
+    (async function () {
+        const q = new URLSearchParams(location.search);
+        let email = q.get('email'), password = q.get('password');
+        if (!email || !password) {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem('sl_auth') || 'null'); } catch { saved = null; }
+            if (saved && saved.email && saved.password) { email = saved.email; password = saved.password; }
+        }
+        if (!email || !password) { renderGate(GATE_COPY); return; }
+
+        const res = await signIn(email, password);
+        if (!res.success) {
+            renderGate(res.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : AUTH_COPY);
+            return;
+        }
+        const d = res.data || {};
+        setSessionToken(d.access_token);
+        try { localStorage.setItem('sl_auth', JSON.stringify({ email, password })); } catch { /* private mode */ }
+        const who = d?.user?.email || email;
+        document.getElementById('ownerid').textContent = who;
+
+        /* --- roster gate (Phase 8): the roster is the identity boundary. ----
+           staff_session() reads the caller's claims email against staff_roster and
+           refreshes last_seen_at; role and active come from that row, never from
+           the browser. STAFF_NOT_REGISTERED covers "no row" and "row suspended".
+           The ?owneremails= bootstrap stays accepted harmlessly in sl_config —
+           harmless leftover, the roster decides. */
+        const ss = await staffSession();
+        if (!ss.success) {
+            renderGate(ss.error?.code === 'NETWORK' ? ERR_COPY.NETWORK : NOT_ON_ROSTER);
+            return;
+        }
+        const me = ss.data || {};
+        const active = me.active === true || String(me.active) === 'true';
+        if (String(me.role ?? '') !== 'owner' || !active) { renderGate(NOT_OWNER_STATION); return; }
+        ownerTier = String(me.tier ?? '');   // Phase 9: plan tier drives tier-locked actions
+
+        /* Store isolation check — Marcelas owner only */
+        if (me.store_id !== '00000000-0000-0000-8333-000000000002') {
+            renderGate("This station belongs to a different store — you are not authorized.");
+            return;
+        }
+
+        /* LEGACY, superseded by sql/07 roster_role_of — kept as a note, not deleted
+           silently: the CONFIG.ownerEmails browser allowlist used to be the whole
+           owner gate, which any signed-in user could satisfy by editing the URL.
+               const owners = CONFIG.ownerEmails || [];
+               if (!owners.length || !owners.includes(who)) { renderGate(NOT_OWNER); return; }
+        */
+
+        await Promise.all([loadSales(), loadTurnover(), loadMenu(), loadClaims(), loadRoster()]);
+        paint();
+    })();
+</script>
+</body>
+</html>

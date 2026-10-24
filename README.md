@@ -5,15 +5,29 @@ the entire backend (PostgreSQL + SQL functions + Storage + Realtime + RLS). No
 Node/Express runtime is deployed. Every client API call returns the SOP JSON
 envelope `{ "success": true, "data": {}, "error": null }`.
 
+**Version:** v2.0 (Multi-Tenant + Staff JWT Fix) · **Date:** 2026-10-24
+
+## Stores
+
+| Store | Slug | Tier | UUID |
+|---|---|---|---|
+| Sleepless Café (flagship) | `flagship` | pro | `00000000-0000-0000-8333-000000000001` |
+| Marcelas B&B Restaurant | `marcelas` | starter | `00000000-0000-0000-8333-000000000002` |
+
 ## The interfaces
 
 | Interface | File | Who reaches it | How |
 |---|---|---|---|
 | Customer launcher (public root) | `index.html` | customers | GitHub Pages root `/` |
-| Customer menu & checkout | `menu.html` | customers | from `index.html` |
-| Cashier | `cashier.html` | staff | direct URL / bookmark only |
-| Kitchen / KDS | `kitchen.html` | staff | direct URL / bookmark only |
-| Owner dashboard | `owner.html` | staff | direct URL / bookmark only |
+| Customer menu & checkout | `menu.html` | customers | from `index.html` (add `?store=marcelas`) |
+| Login (store selector) | `login.html` | staff | direct URL / bookmark |
+| Cashier | `cashier.html` | staff | direct URL / bookmark |
+| Kitchen / KDS | `kitchen.html` | staff | direct URL / bookmark |
+| Owner dashboard | `owner.html` | staff | direct URL / bookmark |
+| Marcelas cashier | `marcelas-cashier.html` | marcelas staff | direct URL |
+| Marcelas kitchen | `marcelas-kitchen.html` | marcelas staff | direct URL |
+| Marcelas owner | `marcelas-owner.html` | marcelas staff | direct URL |
+| Marcelas login | `marcelas-login.html` | marcelas staff | direct URL |
 
 On GitHub Pages the URLs are `https://<you>.github.io/<repo>/index.html`,
 `.../menu.html`, `.../cashier.html`, `.../kitchen.html`, `.../owner.html`.

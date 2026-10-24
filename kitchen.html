@@ -221,7 +221,7 @@
                        <p class="text-brand-muted text-sm">Nothing waiting in the kitchen.</p>
                      </div>`;
         const note = boardError
-            ? `<p class="text-brand-accentLight text-xs mt-2">${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
+            ? `<p class="text-brand-accentLight text-xs mt-2">[${boardError}] ${ERR_COPY[boardError] ?? ERR_COPY.HTTP}</p>`
             : '';
         return `${body || empty}${note}`;
     }

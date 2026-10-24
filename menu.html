@@ -116,7 +116,7 @@
 </script>
 
 <script type="module">
-    import { resolveStore, menuForStore, categoriesForStore, createOrder, fmtPeso, mintStoreToken, setAnonStoreToken } from './assets/api.js';
+    import { resolveStore, menuForStore, categoriesForStore, createOrder, fmtPeso, mintStoreToken, setAnonStoreToken } from './assets/api.js?v=2';
     import { CONFIG } from './assets/config.js';
 
     /* --- state ----------------------------------------------------------- */
@@ -377,7 +377,7 @@
            instead of a duplicate. */
         const snapshot = cart;
         cart = new Map();
-        const res = await createOrder(pendingName, items);
+        const res = await createOrder(pendingName, items, storeCtx?.storeId);
         if (res.success) {
             const d = res.data || {};
             /* code stays a string end-to-end; never Number() it. */
